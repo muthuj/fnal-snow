@@ -219,33 +219,39 @@ sub incident_assign {
     return $self->update ('incident', { 'number' => $number }, $update);
 }
 
-=item incident_list (I<SEARCH>, I<EXTRA>)
+=item tkt_list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
 
-Performs an Incident query, and returns an array of matching Incident hashrefs.
-This query is against the table F<incident>, using the parameters in the
-hashref I<SEARCH> and (if present) the extra parameters in I<EXTRA> against
-the F<__encoded_query> field.  (The last part must be pre-formatted; use this
-at your own risk!)
+Performs an I<TYPE> query, and returns an array of matching hashrefs.  This
+query is against the table associated with I<TYPE> (incidents, requests,
+request items, and tasks), using the parameters in the hashref I<SEARCH> and
+(if present) the extra parameters in I<EXTRA> against the F<__encoded_query>
+field.  (The last part must be pre-formatted; use this at your own risk!)
 
 =cut
 
-sub incident_list {
-    my ($self, $search, $extra) = @_;
+sub tkt_list_by_type {
+    my ($self, $type, $search, $extra) = @_;
+    $type = $self->_tkt_type ($type);
     if ($extra) { $$search{'__encoded_query'} = $extra }
-    my @entries = $self->query( 'incident', $search );
+    my @entries = $self->query($type, $search);
     return @entries;
 }
 
-=item incident_list_by_assignee (I<USER>, I<EXTRA>)
+sub incident_list { shift->tkt_list_by_type ('Incident', @_) }
+
+=item tkt_list_by_assignee (I<TYPE>, I<EXTRA>)
 
 Queries for incidents assigned to the user I<NAME>.  Returns an array of
 matching entries.
 
 =cut
 
-sub incident_list_by_assignee {
-    shift->incident_list ( { 'assigned_to' => shift }, shift )
+sub tkt_list_by_assignee {
+    my ($self, $type, $user, $extra) = @_;
+    $self->tkt_list_by_type ( $type, { 'assigned_to' => $user }, $extra )
 }
+
+sub incident_list_by_assignee { shift->tkt_list_by_assignee ('Incident', @_) }
 
 =item incident_by_number (I<NUMBER>)
 
@@ -302,13 +308,16 @@ Standardizes an incident number into the 15-character string starting with
 
 sub parse_incident_number {
     my ($self, $num) = @_;
-    return $num if $num && $num =~ /^(HD0|INC|TAS)/ && length ($num) == 15;
+    return $num if $num && $num =~ /^(INC|REQ)/ && length ($num) == 15;
+    return $num if $num && $num =~ /^(TASK|RITM)/ && length ($num) == 11;
 
     $num ||= "";
-    if ($num =~ /^(HD0|TAS|INC)(\d+)$/) {
-        $num = $1    . ('0' x (12 - length ($num))) . $2;
+    if ($num =~ /^(INC|REQ)(\d+)$/) {
+        $num = join ('', $1, ('0' x (15 - length ($num))), $2);
+    } elsif ($num =~ /^(TASK|RITM)(\d+)$/) {
+        $num = join ('', $1, ('0' x (11 - length ($num))), $2);
     } elsif ($num =~ /^(\d+)/) {
-        $num = 'INC' . ('0' x (12 - length ($num))) . $1;
+        $num = join ('', 'INC', ('0' x (12 - length ($num))), $1);
     } else {
         return;
     }
@@ -323,96 +332,111 @@ sub parse_incident_number {
 ### Incident Lists ###########################################################
 ##############################################################################
 
-=head2 Incident List Text Functions
+=head2 Ticket List Text Functions
 
-These functions generate an array of incident objects, and pass them through
+These functions generate an array of ticket objects, and pass them through
 B<tkt_list()> to generate human-readable reports.  Each of them either returns
 an array of lines suitable for printing, or (in a scalar syntax) a single
 string with built-in newlines.
 
 =over 4
 
-=item text_inclist_assignee (USER, SUBTYPE)
+=item text_tktlist_assignee (TYPE, USER, SUBTYPE)
 
 List incidents assigned to user I<USER>.  I<SUBTYPE> can be used to filter
 based on 'open', 'closed', or 'unresolved' tickets.
 
 =cut
 
-sub text_inclist_assignee {
-    my ($self, $user, $subtype) = @_;
-    my ($extra, $text) = _tkt_filter ('Incident', 'subtype' => $subtype);
+sub text_tktlist_assignee {
+    my ($self, $type, $user, $subtype) = @_;
+    my $t = $self->_tkt_type ($type);
+    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
     $text = "== $text assigned to user '$user'";
 
-    return $self->tkt_list ( $text,
-        $self->incident_list_by_assignee ($user, $extra)
+    return $self->tkt_list ($text,
+        $self->tkt_list_by_assignee ($t, $user, $extra)
     );
 }
 
-=item text_inclist_group (GROUP, SUBTYPE)
+sub text_inclist_assignee { shift->text_tktlist_assignee ('Incident', @_); }
+
+=item text_tktlist_group (TYPE, GROUP, SUBTYPE)
 
 List incidents assigned to group I<GROUP>.  I<SUBTYPE> can be used to filter
 based on 'open', 'closed', or 'unresolved' tickets.
 
 =cut
 
-sub text_inclist_group {
-    my ($self, $group, $subtype) = @_;
-    my ($extra, $text) = _tkt_filter ('Incident', 'subtype' => $subtype);
+sub text_tktlist_group {
+    my ($self, $type, $group, $subtype) = @_;
+    my $t = $self->_tkt_type ($type);
+    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
     $text = "== $text assigned to group '$group'";
     return $self->tkt_list ( $text,
-        $self->incident_list( { 'assignment_group' => $group }, $extra)
+        $self->tkt_list_by_type($t, { 'assignment_group' => $group }, $extra)
     );
 }
 
-=item text_inclist_submit (USER, SUBTYPE)
+sub text_inclist_group { shift->text_tktlist_group ('Incident', @_); }
 
-List incidents submitted by user I<USER>.  I<SUBTYPE> can be used to filter
-based on 'open', 'closed', or 'unresolved' tickets.
+=item text_tktlist_submit (TYPE, USER, SUBTYPE)
+
+List tickets submitted by user I<USER>.  I<SUBTYPE> can be used to filter based
+on 'open', 'closed', or 'unresolved' tickets.
 
 =cut
 
-sub text_inclist_submit {
-    my ($self, $user, $subtype) = @_;
-    my ($extra, $text) = _tkt_filter ('Incident', 'subtype' => $subtype);
+sub text_tktlist_submit {
+    my ($self, $type, $user, $subtype) = @_;
+    my $t = $self->_tkt_type ($type);
+    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
     $text = "== $text submitted by user '$user'";
     return $self->tkt_list ( $text,
-        $self->incident_list( { 'sys_created_by' => $user }, $extra)
+        $self->tkt_list_by_type ($t, { 'sys_created_by' => $user }, $extra)
     );
 }
 
-=item text_inclist_unassigned (GROUP)
+sub text_inclist_submit { shift->text_tktlist_group ('Incident', @_) }
+
+=item text_tktlist_unassigned (TYPE, GROUP)
 
 List unresolved, unassigned tickets assigned to group I<GROUP>.
 
 =cut
 
-sub text_inclist_unassigned {
-    my ($self, $group) = @_;
-    my ($extra, $text) = _tkt_filter ('Incident',
+sub text_tktlist_unassigned {
+    my ($self, $type, $group) = @_;
+    my $t = $self->_tkt_type ($type);
+    my ($extra, $text) = _tkt_filter ($type,
         'unassigned' => 1, 'subtype' => 'unresolved');
     $text = "== $group: $text";
     return $self->tkt_list ( $text,
-        $self->incident_list( { 'assignment_group' => $group }, $extra)
+        $self->tkt_list_by_type($t, { 'assignment_group' => $group }, $extra)
     );
 }
 
-=item text_inclist_unresolved (GROUP, TIMESTAMP)
+sub text_inclist_unassigned { shift->text_tktlist_unassigned ('Incident', @_) }
+
+=item text_tktlist_unresolved (TYPE, GROUP, TIMESTAMP)
 
 List unresolved tickets assigned to group I<GROUP> that were submitted before
 the timestamp I<TIMESTAMP>.
 
 =cut
 
-sub text_inclist_unresolved {
-    my ($self, $group, $timestamp) = @_;
-    my ($extra, $text) = _tkt_filter ('Incident',
+sub text_tktlist_unresolved {
+    my ($self, $type, $group, $timestamp) = @_;
+    my $t = $self->_tkt_type ($type);
+    my ($extra, $text) = _tkt_filter ($type,
         'submit_before' => $timestamp, 'subtype' => 'unresolved');
     $text = "== $group: $text";
     return $self->tkt_list ( $text,
-        $self->incident_list( { 'assignment_group' => $group }, $extra)
+        $self->tkt_list_by_type ($t, { 'assignment_group' => $group }, $extra)
     );
 }
+
+sub text_inclist_unresolved { shift->text_tktlist_unresolved ('Incident', @_) }
 
 =back
 
@@ -428,6 +452,24 @@ These should ideally work against incidents, tasks, requests, etc.
 
 =over 4
 
+=item tkt_by_number
+
+=cut
+
+sub tkt_by_number {
+    my ($self, $number) = @_;
+    my $num = $self->parse_incident_number ($number);
+    my $type = $self->_tkt_type_by_number ($num);
+    return $self->tkt_search ($type, { 'number' => $num });
+}
+
+sub tkt_search {
+    my ($self, $type, $search, $extra) = @_;
+    if ($extra) { $$search{'__encoded_query'} = $extra }
+    my @entries = $self->query($type, $search );
+    return @entries;
+}
+
 =item tkt_is_resolved (CODE)
 
 Returns 1 if the ticket is resolved, 0 otherwise.
@@ -435,7 +477,6 @@ Returns 1 if the ticket is resolved, 0 otherwise.
 =cut
 
 sub tkt_is_resolved { return _tkt_state (@_) >= 4 ? 1 : 0 }
-
 
 =item tkt_reopen
 
@@ -493,7 +534,7 @@ Uses B<update()>, with a hash made of I<ARGUMENTS>.
 
 sub tkt_update {
     my ($self, $code, %args) = @_;
-    return $self->update ($self->_tkt_type($code),
+    return $self->update ($self->_tkt_type_by_number($code),
         { 'number' => $code }, \%args);
 }
 
@@ -651,6 +692,7 @@ sub tkt_string_primary {
         'Urgency'       => $self->_tkt_urgency ($tkt),
         'Priority'      => $self->_tkt_priority ($tkt),
         'Service Type'  => $self->_tkt_svctype ($tkt),
+        'ITIL Status'   => $self->_tkt_stage ($tkt)
     );
     return wantarray ? @return : join ("\n", @return, '');
 }
@@ -727,12 +769,12 @@ sub tkt_summary {
         my $request     = $self->_tkt_requestor ($tkt);
         my $assign      = $self->_tkt_assigned_person ($tkt);
         my $group       = $self->_tkt_assigned_group ($tkt);
-        my $status      = $self->_tkt_status ($tkt);
+        my $status      = $self->_tkt_status ($tkt) || $self->_tkt_stage($tkt);
         my $created     = $self->_format_date ($self->_tkt_date_submit ($tkt));
         my $updated     = $self->_format_date ($self->_tkt_date_update ($tkt));
         my $description = $self->_tkt_summary ($tkt);
 
-        push @return, sprintf ("%-7s  %-17.17s  %-17.17s  %-17.17s  %12.12s",
+        push @return, sprintf ("%-9s  %-15.15s  %-17.17s  %-16.16s  %14.14s",
             $inc_num, $request, $assign, $group, $status );
         push @return, sprintf (" Created: %-20.20s    Updated: %-20.20s",
             $created, $updated);
@@ -818,6 +860,8 @@ sub users_by_username {
     my @entries = $self->query ('sys_user', { 'user_name' => $user });
     return @entries;
 }
+
+sub _user_by_username { (users_by_username(@_))[0] }
 
 =item user_in_groups (I<USER>)
 
@@ -937,7 +981,7 @@ sub _format_text_field {
 
 sub _incident_shorten {
     my ($inc) = @_;
-    $inc =~ s/^INC0+//;
+    $inc =~ s/^(INC|RITM|TASK|TKT)0+/$1/;
     return $inc;
 }
 
@@ -981,8 +1025,9 @@ sub _tkt_requestor       { $_[1]{'dv_sys_created_by'}    || '(unknown)' }
 sub _tkt_resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }
 sub _tkt_resolved_code   { $_[1]{'close_code'}           || '(none)'    }
 sub _tkt_resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
-sub _tkt_state           { $_[1]{'incident_state'} }
-sub _tkt_status          { $_[1]{'dv_incident_state'}    || '(unknown)' }
+sub _tkt_stage           { $_[1]{'stage'}                || ''          }
+sub _tkt_state           { $_[1]{'incident_state'}       || 0           }
+sub _tkt_status          { $_[1]{'dv_incident_state'}    || '' }
 sub _tkt_summary         { $_[1]{'dv_short_description'} || '(none)'    }
 sub _tkt_svctype         { $_[1]{'u_service_type'}       || '(unknown)' }
 sub _tkt_urgency         { $_[1]{'dv_urgency'}           || '(unknown)' }
@@ -1004,6 +1049,8 @@ sub _tkt_filter {
     my ($type, %args) = @_;
     my ($text, $extra);
 
+    my ($t) = _tkt_type(undef, $type);
+
     my $subtype = $args{'subtype'} || '';
     my $unassigned = $args{'unassigned'} || 0;
 
@@ -1013,12 +1060,16 @@ sub _tkt_filter {
     if      (lc $subtype eq 'open') {
         $text  = "Open ${type}s";
         push @extra, "incident_state<4";
+        push @extra, "stage!=complete";
+        push @extra, "stage!=Request Cancelled";
     } elsif (lc $subtype eq 'closed') {
         $text = "Closed ${type}s";
         push @extra, 'incident_state>=4';
+        push @extra, "stage=Request Cancelled";
     } elsif (lc $subtype eq 'unresolved') {
         $text = "Unresolved ${type}s";
         push @extra, 'incident_state<7';
+        push @extra, "stage!=complete";
     } elsif (defined ($subtype)) {
         $text = "All ${type}s"
     }
@@ -1036,13 +1087,25 @@ sub _tkt_filter {
     return (join ('^', @extra), $text);
 }
 
-### _tkt_type (SELF, NUMBER)
-# Returns the associatd table name for the given NUMBER style.
+### _tkt_type (SELF, NAME)
+# Returns the associated table name for the given NAME.
 sub _tkt_type {
+    my ($self, $name) = @_;
+    if ($name =~ /^inc/i)  { return 'incident'    }
+    if ($name =~ /^req/i)  { return 'sc_request'  }
+    if ($name =~ /^ritm/i) { return 'sc_req_item' }
+    if ($name =~ /^tas/i)  { return 'sc_task'     }
+    return $name;
+}
+
+### _tkt_type_by_number (SELF, NUMBER)
+# Returns the associated table name for the given NUMBER style.
+sub _tkt_type_by_number {
     my ($self, $number) = @_;
-    if ($number =~ /^INC/)  { return 'incident' }
-    if ($number =~ /^TASK/) { return 'sc_task'  }
-    if ($number =~ /^TKT/)  { return 'ticket'   }
+    if ($number =~ /^INC/)  { return 'incident'    }
+    if ($number =~ /^REQ/)  { return 'sc_request'  }
+    if ($number =~ /^RITM/) { return 'sc_req_item' }
+    if ($number =~ /^TASK/) { return 'sc_task'     }
     return;
 }
 

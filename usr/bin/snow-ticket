@@ -2,20 +2,21 @@
 
 =head1 NAME
 
-snow-incident - prints useful information about a Service Now incident
+snow-ticket - print information about a Service Now incident, request, etc
 
 =head1 SYNOPSIS
 
-B<snow-incident> F<INCIDENT_NUMBER>
+B<snow-ticket> F<INCIDENT_NUMBER>
 
-B<snow-incident> --man
+B<snow-ticket> --man
 
 =head1 DESCRIPTION
 
-snow-incident prints useful information about a Service Now incident on STDOUT.
-Specifically, we query the SN database for a given incident number (or list
+snow-ticket prints useful information to STDOUT about a Service Now 'ticket'
+type (defined here as an Incident, Request, Requested Item, or Task).
+Specifically, we query the SN database for a given number (or list
 of numbers), and for each one we create a human-readable report containing
-relevant information.
+relevant information (selected at the module level).
 
 =cut
 
@@ -80,11 +81,11 @@ $SNOW->connect or die "could not connect to SN\n";
 pod2usage ("invalid type: $TYPE") 
     unless $TYPE =~ /^(base|debug|worklog)$/i;
 
-pod2usage ("no incidents requested") unless scalar @ARGV;
+pod2usage ("no tickets requested") unless scalar @ARGV;
 foreach my $incnum (@ARGV) { 
 
     debug "Looking up incident '$incnum'";
-    my @incident = $SNOW->incident_by_number ($incnum);
+    my @incident = $SNOW->tkt_by_number ($incnum);
     unless (@incident) { 
         print "unable to load incident: '$incnum'\n"; 
         next;
@@ -202,8 +203,10 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLES
 
-    snow-incident 389936
-    snow-incident INC000000389936 --type debug
+    snow-ticket INC000000389936 
+    snow-ticket TASK0029147
+    snow-ticket REQ000181628
+    snow-ticket RITM82493
 
 =head1 AUTHOR
 
