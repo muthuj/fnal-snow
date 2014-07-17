@@ -34,6 +34,7 @@ use strict;
 use warnings;
 
 use Class::Struct;
+use Data::Dumper;
 use Date::Manip;
 use FNAL::SNOW::Config;
 use MIME::Lite;
@@ -136,7 +137,7 @@ sub load_yaml {
 
 =head2 Database Subroutines
 
-These subroutines are used for direct database queries.
+These subroutines perform direct database queries, using B<ServiceNow::GlideRecord>.
 
 =over 4
 
@@ -161,6 +162,32 @@ sub query {
     return @return;
 }
 
+=item update (TABLE, QUERY, UPDATE)
+
+Updates Service Now objects in table I<TABLE> matching parameters from the
+hashref I<QUERY>.  I<UPDATE> is a hashref containing updates.  Returns an
+array of updated entries.
+
+=cut
+
+sub update {
+    my ($self, $table, $query, $update) = @_;
+    my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
+    $glide->query ($query);
+
+    my @return;
+    while ($glide->next()) {
+        foreach (keys %$update) {
+            $glide->setValue ($_, $$update{$_});
+        }
+        $glide->update();
+        my %record = $glide->getRecord();
+        push @return, \%record;
+    }
+
+    return @return;
+}
+
 =cut
 
 ##############################################################################
@@ -174,12 +201,30 @@ a separate class).
 
 =over 4
 
+=item incident_assign (I<NUMBER>, I<GROUP>, I<USER>)
+
+Assigns incident I<NUMBER> to a given group and/or user.  If we are given
+a blank value for I<USER>, we willclear the assignment field.  Returns an
+array of updated Incident hashrefs (hopefully just one!).
+
+=cut
+
+sub incident_assign {
+    my ($self, $number, $group, $user) = @_;
+
+    my $update = {};
+    if ($group)        { $$update{'assignment_group'} = $group }
+    if (defined $user) { $$update{'assigned_to'}    = $user || 0 }
+
+    return $self->update ('incident', { 'number' => $number }, $update);
+}
+
 =item incident_list (I<SEARCH>, I<EXTRA>)
 
 Performs an Incident query, and returns an array of matching Incident hashrefs.
 This query is against the table F<incident>, using the parameters in the
-hashref I<SEARCH> and (if present) the extra parameters in I<EXTRA> against 
-the F<__encoded_query> field.  (The last part must be pre-formatted; use this 
+hashref I<SEARCH> and (if present) the extra parameters in I<EXTRA> against
+the F<__encoded_query> field.  (The last part must be pre-formatted; use this
 at your own risk!)
 
 =cut
@@ -247,6 +292,7 @@ sub incident_list_by_username {
     return @entries;
 }
 
+
 =item parse_incident_number (NUMBER)
 
 Standardizes an incident number into the 15-character string starting with
@@ -288,7 +334,8 @@ string with built-in newlines.
 
 =item text_inclist_assignee (USER, SUBTYPE)
 
-Wrapper for B<incident_list_by_assignee()>.  B<SUBTYPE> can be used to filt
+List incidents assigned to user I<USER>.  I<SUBTYPE> can be used to filter
+based on 'open', 'closed', or 'unresolved' tickets.
 
 =cut
 
@@ -304,9 +351,8 @@ sub text_inclist_assignee {
 
 =item text_inclist_group (GROUP, SUBTYPE)
 
-
-Li
-Wrapper for B<incident_list( { 'assignment_group' => GROUP } )>.
+List incidents assigned to group I<GROUP>.  I<SUBTYPE> can be used to filter
+based on 'open', 'closed', or 'unresolved' tickets.
 
 =cut
 
@@ -321,6 +367,9 @@ sub text_inclist_group {
 
 =item text_inclist_submit (USER, SUBTYPE)
 
+List incidents submitted by user I<USER>.  I<SUBTYPE> can be used to filter
+based on 'open', 'closed', or 'unresolved' tickets.
+
 =cut
 
 sub text_inclist_submit {
@@ -333,6 +382,8 @@ sub text_inclist_submit {
 }
 
 =item text_inclist_unassigned (GROUP)
+
+List unresolved, unassigned tickets assigned to group I<GROUP>.
 
 =cut
 
@@ -347,6 +398,9 @@ sub text_inclist_unassigned {
 }
 
 =item text_inclist_unresolved (GROUP, TIMESTAMP)
+
+List unresolved tickets assigned to group I<GROUP> that were submitted before
+the timestamp I<TIMESTAMP>.
 
 =cut
 
@@ -365,6 +419,89 @@ sub text_inclist_unresolved {
 =cut
 
 ##############################################################################
+### Generic Ticket Actions ###################################################
+##############################################################################
+
+=head2 Generic Ticket Actions
+
+These should ideally work against incidents, tasks, requests, etc.
+
+=over 4
+
+=item tkt_is_resolved (CODE)
+
+Returns 1 if the ticket is resolved, 0 otherwise.
+
+=cut
+
+sub tkt_is_resolved { return _tkt_state (@_) >= 4 ? 1 : 0 }
+
+
+=item tkt_reopen
+
+Update the ticket to set the incident_state back to 'Work In Progress', 
+and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>, 
+and I<resolved_by>.
+
+Uses B<tkt_update()>.
+
+=cut
+
+sub tkt_reopen {
+    my ($self, $code, %args) = @_;
+    my %update = (
+        'incident_state' => 2,      # 'Work In Progress'
+        'close_notes'    => 0,
+        'close_code'     => 0,
+        'resolved_at'    => 0,
+        'resolved_by'    => 0,
+    );
+    return $self->tkt_update ($code, %update);
+}
+
+=item tkt_resolve ( CODE, ARGUMENT_HASH )
+
+Updates the ticket to status 'resolved', as well as the following fields 
+based on I<ARGUMENT_HASH>:
+
+   close_code       The resolution code (which can be anything, but FNAL has
+                    a set list that they want it to be)
+   text             Text to go in the resolution text.
+   user             Set 'resolved_by' to this user.
+
+Uses B<tkt_update()>.
+
+=cut
+
+sub tkt_resolve {
+    my ($self, $code, %args) = @_;
+    my %update = (
+        'incident_state' => 6,      # 'Resolved'
+        'close_notes'    => $args{'text'},
+        'close_code'     => $args{'close_code'},
+        'resolved_by'    => $args{'user'},
+    );
+    return $self->tkt_update ($code, %update);
+}
+
+=item tkt_update (CODE, ARGUMENTS)
+
+Update the ticket, incident, or task associated with the string I<CODE>.
+Uses B<update()>, with a hash made of I<ARGUMENTS>.
+
+=cut
+
+sub tkt_update {
+    my ($self, $code, %args) = @_;
+    return $self->update ($self->_tkt_type($code),
+        { 'number' => $code }, \%args);
+}
+
+=back
+
+=cut
+
+##############################################################################
 ### Generic Ticket Reporting #################################################
 ##############################################################################
 
@@ -376,7 +513,7 @@ These should ideally work against incidents, tasks, requests, etc.
 
 =item tkt_list (TEXT, TICKETLIST)
 
-Given a list of ticket objects, pushes them all through B<tkt_summary()> and 
+Given a list of ticket objects, pushes them all through B<tkt_summary()> and
 combines the text into a single object.
 
 =cut
@@ -411,7 +548,7 @@ sub tkt_string_assignee {
 =item tkt_string_base (TICKET)
 
 Generates a combined report, with the primary, requestor, assignee,
-description, worklog (if present), and resolution status (if present).
+description, journal (if present), and resolution status (if present).
 
 =cut
 
@@ -423,10 +560,10 @@ sub tkt_string_base {
     push @return, '', $self->tkt_string_requestor   ($tkt);
     push @return, '', $self->tkt_string_assignee    ($tkt);
     push @return, '', $self->tkt_string_description ($tkt);
-    if (my @worklog = $self->tkt_string_worklog ($tkt)) {
-        push @return, '', @worklog;
+    if (my @journal = $self->tkt_string_journal ($tkt)) {
+        push @return, '', @journal;
     }
-    if ($self->_tkt_is_resolved ($tkt)) {
+    if ($self->tkt_is_resolved ($tkt)) {
         push @return, '', $self->tkt_string_resolution ($tkt);
     }
 
@@ -463,6 +600,37 @@ sub tkt_string_description {
             $self->_tkt_description ($tkt));
     return wantarray ? @return : join ("\n", @return, '');
 }
+
+=item tkt_string_journal (TICKET)
+
+Generates a report showing all journal entries associated with this ticket, in
+reverse order (blog style).
+
+=cut
+
+sub tkt_string_journal {
+    my ($self, $tkt) = @_;
+    my @return = "Journal Entries";
+    my @entries = $self->_journal_entries ($tkt);
+    if (scalar @entries < 1) { return '' }
+
+    my $count = scalar @entries;
+    foreach my $journal (reverse @entries) {
+        push @return, "  Entry " . $count--;
+        push @return, $self->_format_text_field (
+            {'minwidth' => 20, 'prefix' => '    '},
+            'Date'       => $self->_format_date(
+                                $self->_journal_date ($journal), 'GMT'),
+            'Created By' => $self->_journal_author ($journal),
+            'Type'       => $self->_journal_type   ($journal),
+        );
+        push @return, '', '    ' . $self->_journal_text ($journal), '';
+        # push @return, '', $self->_format_text ({'prefix' => '    '},
+            # $self->_journal_text ($journal)), '';
+    }
+    return wantarray ? @return : join ("\n", @return, '');
+}
+
 
 =item tkt_string_primary (TICKET)
 
@@ -523,6 +691,27 @@ sub tkt_string_resolution {
     return wantarray ? @return : join ("\n", @return, '');
 }
 
+=item tkt_string_short (TICKET)
+
+Like tkt_string_basic(), but dropping the worklog.
+
+=cut
+
+sub tkt_string_short {
+    my ($self, $tkt) = @_;
+
+    my @return;
+    push @return,     $self->tkt_string_primary     ($tkt);
+    push @return, '', $self->tkt_string_requestor   ($tkt);
+    push @return, '', $self->tkt_string_assignee    ($tkt);
+    push @return, '', $self->tkt_string_description ($tkt);
+    if ($self->tkt_is_resolved ($tkt)) {
+        push @return, '', $self->tkt_string_resolution ($tkt);
+    }
+
+    return wantarray ? @return : join ("\n", @return, '');
+}
+
 =item tkt_summary ( TICKET [, TICKET [, TICKET [...]]] )
 
 Generates a report showing a human-readable summary of a series of tickets,
@@ -550,34 +739,6 @@ sub tkt_summary {
         push @return, sprintf (" Subject: %-70.70s", $description);
     }
     return wantarray ? @return : join ("\n", @return);
-}
-
-=item tkt_string_worklog (TICKET)
-
-Generates a report showing all journal entries associated with this ticket, in
-reverse order (blog style).
-
-=cut
-
-sub tkt_string_worklog {
-    my ($self, $tkt) = @_;
-    my @return = "Worklog Entries";
-    my @entries = $self->_journal_entries ($tkt);
-    if (scalar @entries < 1) { return '' }
-
-    my $count = scalar @entries;
-    foreach my $journal (@entries) {
-        push @return, "  Entry " . $count--;
-        push @return, $self->_format_text_field (
-            {'minwidth' => 20, 'prefix' => '    '},
-            'Date'       => $self->_format_date(
-                                $self->_journal_date ($journal)),
-            'Created By' => $self->_journal_author ($journal),
-        );
-        push @return, '', $self->_format_text ({'prefix' => '    '},
-            $self->_journal_text ($journal)), '';
-    }
-    return wantarray ? @return : join ("\n", @return, '');
 }
 
 =back
@@ -709,10 +870,10 @@ sub set_ticket { set_config ('ticket', @_ ) }
 # seconds-since-epoch; if we can
 
 sub _format_date {
-    my ($self, $time) = @_;
+    my ($self, $time, $zone) = @_;
     if ($time =~ /^\d+$/) { }   # all is well
-    elsif ($time) { $time = UnixDate ($time, "%s") || time; }
-    return $time ? strftime ("%Y-%m-%d %H:%M:%S %Z", localtime ($time))
+    elsif ($time) { $time = UnixDate ($time || time, '%s'); }
+    return $time ? strftime ("%Y-%m-%d %H:%M:%S %Z", localtime($time))
                  : sprintf ("%-20s", "(unknown)");
 }
 
@@ -783,16 +944,25 @@ sub _incident_shorten {
 ### _journal_* (SELF, TKT)
 # Returns the appropriate data from a passed-in ticket hash.
 
-sub _journal_author { $_[1]{'sys_created_by'} || '(unknown)' }
-sub _journal_date   { $_[1]{'sys_created_on'} || '(unknown)' }
-sub _journal_text   { $_[1]{'value'}          || ''          }
+sub _journal_author { $_[1]{'dv_sys_created_by'} || '(unknown)' }
+sub _journal_date   { $_[1]{'dv_sys_created_on'} || '(unknown)' }
+sub _journal_text   { $_[1]{'dv_value'}          || ''          }
+sub _journal_type   { $_[1]{'dv_element'}        || ''          }
 
 ### _journal_entries (SELF, TKT)
-# List all journal entries associated with this object.
+# List all journal entries associated with this object, sorted by date.
 
 sub _journal_entries {
     my ($self, $tkt) = @_;
-    $self->query ('sys_journal_field', { 'element_id' => $tkt->{'sys_id'} });
+    my (@return, %entries);
+    foreach my $entry ($self->query ('sys_journal_field',
+        { 'element_id' => $tkt->{'sys_id'} })) {
+        my $key = $self->_journal_date($entry);
+        $entries{$key} = $entry;
+    }
+    foreach (sort keys %entries) { push @return, $entries{$_} }
+
+    return @return;
 }
 
 ### _tkt_* (SELF, TKT)
@@ -802,16 +972,16 @@ sub _journal_entries {
 sub _tkt_assigned_group  { $_[1]{'dv_assignment_group'}  || '(none)'    }
 sub _tkt_assigned_person { $_[1]{'dv_assigned_to'}       || '(none)'    }
 sub _tkt_date_resolved   { $_[1]{'dv_resolved_at'}       || ''          }
-sub _tkt_date_submit     { $_[1]{'opened_at'}            || ''          }
-sub _tkt_date_update     { $_[1]{'sys_updated_on'}       || ''          }
+sub _tkt_date_submit     { $_[1]{'dv_opened_at'}         || ''          }
+sub _tkt_date_update     { $_[1]{'dv_sys_updated_on'}    || ''          }
 sub _tkt_description     { $_[1]{'description'}          || ''          }
-sub _tkt_is_resolved     { _tkt_resolved_by($_[1]) ? 1 : 0 }
 sub _tkt_number          { $_[1]{'number'}               || '(none)'    }
 sub _tkt_priority        { $_[1]{'dv_priority'}          || '(unknown)' }
 sub _tkt_requestor       { $_[1]{'dv_sys_created_by'}    || '(unknown)' }
 sub _tkt_resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }
 sub _tkt_resolved_code   { $_[1]{'close_code'}           || '(none)'    }
 sub _tkt_resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
+sub _tkt_state           { $_[1]{'incident_state'} }
 sub _tkt_status          { $_[1]{'dv_incident_state'}    || '(unknown)' }
 sub _tkt_summary         { $_[1]{'dv_short_description'} || '(none)'    }
 sub _tkt_svctype         { $_[1]{'u_service_type'}       || '(unknown)' }
@@ -864,6 +1034,16 @@ sub _tkt_filter {
         $text  = "$text submitted before $time";
     }
     return (join ('^', @extra), $text);
+}
+
+### _tkt_type (SELF, NUMBER)
+# Returns the associatd table name for the given NUMBER style.
+sub _tkt_type {
+    my ($self, $number) = @_;
+    if ($number =~ /^INC/)  { return 'incident' }
+    if ($number =~ /^TASK/) { return 'sc_task'  }
+    if ($number =~ /^TKT/)  { return 'ticket'   }
+    return;
 }
 
 ##############################################################################

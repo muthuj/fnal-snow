@@ -31,8 +31,8 @@ Note that each query can match a maximum of 250 entries.
 ### Configuration ############################################################
 ##############################################################################
 
-use lib '/home/tskirvin/rpm/cms-monitor/lib';
-our $CONFIG_FILE = '/home/tskirvin/rpm/cms-monitor/etc/snow/config.yaml';
+use lib '/home/tskirvin/rpm/fnal-snow/lib';
+our $CONFIG_FILE = '/home/tskirvin/rpm/fnal-snow/etc/snow/config.yaml';
 
 ## Default values, these should all be accessible via command-line parameters
 our $DATE    = 'now';
@@ -40,7 +40,7 @@ our $DEBUG   = 0;
 our $GROUP   = 'all';
 our $SUBTYPE = 'open';
 our $TYPE    = 'group';
-our $USER    = getpwuid($>);
+our $USER    = getpwuid ($>);
 
 ##############################################################################
 ### Declarations #############################################################
