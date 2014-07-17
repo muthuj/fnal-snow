@@ -2,17 +2,17 @@
 
 =head1 NAME
 
-snow-incident-resolve - resolves a Service Now incident
+snow-ticket-reopen - re-opens a Service Now ticket
 
 =head1 SYNOPSIS
 
-B<snow-incident-resolve> F<INCIDENT_NUMBER> F<TEXT>
+B<snow-ticket-reopen> F<INCIDENT_NUMBER>
 
-B<snow-incident-resolve> --man
+B<snow-ticket-reopen> --man
 
 =head1 DESCRIPTION
 
-snow-incident-resolve resolves a specified Incident number.  The updated
+snow-ticket-reopen re-opens a specified Incident number.  The updated
 Incident information is then printed to STDOUT.
 
 =cut
@@ -70,11 +70,8 @@ my $result = $parser->getoptions (
     'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-my ($incnum, @rest) = @ARGV;
-error_usage ("no incident listed") unless ($incnum);
-
-my $text = join (' ', @rest);
-error_usage ('no text provided') if $text eq '';
+my ($tktnum, @rest) = @ARGV;
+error_usage ("no ticket listed") unless ($tktnum);
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -83,24 +80,22 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up incident '$incnum'";
-my @incident = $SNOW->incident_by_number ($incnum);
-unless (@incident) { die "unable to load incident: '$incnum'\n"; }
-unless (scalar @incident == 1) {
-    die "too many matches for incident '$incnum'\n";
+debug "Looking up ticket '$tktnum'";
+my @ticket = $SNOW->tkt_by_number ($tktnum);
+unless (@ticket) { die "unable to load ticket: '$tktnum'\n"; }
+unless (scalar @ticket == 1) {
+    die "too many matches for ticket '$tktnum'\n";
 }
-my $inc = $incident[0];
+my $tkt = $ticket[0];
 
-if ($SNOW->tkt_is_resolved ($inc)) {
-    print "incident is already resolved: '$incnum'\n";
-    print scalar $SNOW->tkt_string_resolution ($inc);
+unless ($SNOW->tkt_is_resolved ($tkt)) {
+    print "ticket is not closed: '$tktnum'\n";
+    print scalar $SNOW->tkt_string_base ($tkt);
     exit 1;
 }
 
-debug "Closing incident";
-my @return = $SNOW->tkt_resolve ($$inc{'number'},
-    'text' => $text, 'close_code' => $CODE,
-    'user' => $USER );
+debug "Reopening ticket";
+my @return = $SNOW->tkt_reopen ($$tkt{'number'});
 
 my $return = 0;
 if (scalar @return > 1) {
@@ -112,10 +107,10 @@ if (scalar @return > 1) {
 }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->incident_by_number($incnum));
+    if (ref $ret && $ret->{number} eq $tkt->{number}) {
+        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number($tktnum));
     } elsif (ref $ret) {
-        print "returned object did not match our original incident number";
+        print "returned object did not match our original ticket number";
         print scalar $SNOW->tkt_string_base ($ret);
         $return = 1;
     } else {
@@ -136,21 +131,13 @@ exit $return;
 
 =item I<INCIDENT_NUMBER>
 
-ID of an incident number to update.  You can leave off the F<INC0+> values.
-
-=item I<TEXT>
-
-Text to enter into the journal entry.
+ID of an ticket number to update.  You can leave off the F<INC0+> values.
 
 =item B<--config> I<CONFIG>
 
 =item B<--debug>
 
 Print debugging information on STDERR.
-
-=item B<--user> I<USER>
-
-The user listed in the submitted text; defaults to $ENV{'USER'} or the running uid.
 
 =item B<--help>
 
@@ -168,7 +155,7 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLES
 
-    snow-incident-resolve 389936 "testing"
+    snow-ticket-reopen INC389936
 
 =head1 AUTHOR
 

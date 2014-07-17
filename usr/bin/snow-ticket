@@ -2,7 +2,7 @@
 
 =head1 NAME
 
-snow-ticket - print information about a Service Now incident, request, etc
+snow-ticket - print information about a Service Now ticket
 
 =head1 SYNOPSIS
 
@@ -78,27 +78,27 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-pod2usage ("invalid type: $TYPE") 
+pod2usage ("invalid type: $TYPE")
     unless $TYPE =~ /^(base|debug|worklog)$/i;
 
 pod2usage ("no tickets requested") unless scalar @ARGV;
-foreach my $incnum (@ARGV) { 
+foreach my $tktnum (@ARGV) {
 
-    debug "Looking up incident '$incnum'";
-    my @incident = $SNOW->tkt_by_number ($incnum);
-    unless (@incident) { 
-        print "unable to load incident: '$incnum'\n"; 
+    debug "Looking up ticket '$tktnum'";
+    my @ticket = $SNOW->tkt_by_number ($tktnum);
+    unless (@ticket) {
+        print "unable to load ticket: '$tktnum'\n";
         next;
     }
 
-    if    (lc $TYPE eq 'base') { 
-        print scalar $SNOW->tkt_string_base (@incident);
+    if    (lc $TYPE eq 'base') {
+        print scalar $SNOW->tkt_string_base (@ticket);
     }
-    elsif (lc $TYPE eq 'debug') { 
-        print scalar $SNOW->tkt_string_debug (@incident);
+    elsif (lc $TYPE eq 'debug') {
+        print scalar $SNOW->tkt_string_debug (@ticket);
     }
-    elsif (lc $TYPE eq 'worklog') { 
-        print scalar $SNOW->tkt_string_worklog (@incident);
+    elsif (lc $TYPE eq 'worklog') {
+        print scalar $SNOW->tkt_string_worklog (@ticket);
     }
 }
 
@@ -108,7 +108,7 @@ exit 0;
 ### Final Documentation ######################################################
 ##############################################################################
 
-=head1 OPTIONS 
+=head1 OPTIONS
 
 =over 4
 
@@ -152,18 +152,18 @@ log entries.  Returns results that look something like this (but longer):
     Entry 5
       Date:                2013-07-10 16:58:42 CDT
       Created By:          youngr
-  
+
       cmslpc21 is not available. Not responding to pings
-  
+
     [...]
 
   Resolution
     Resolved By:         Timothy Skirvin
     Date:                2013-07-10 12:31:19 CDT
     Close Code:          Permanent Solution
-  
+
     Pointed at the current documentation and current server list.  [...]
-    
+
 =item B<--type> F<debug>
 
 Prints complete inforamation about the ticket (and not necessarily the related
@@ -178,7 +178,7 @@ information.  Results look something like this:
     assignment_group                   9cbb42cb0a0a3c590094114cb950ec33
     business_duration                  1970-01-01 01:51:01
     [...]
-  
+
 =item B<--type> F<worklog>
 
 Just returns the 'Worklog Entries' information, as above.
@@ -203,7 +203,7 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLES
 
-    snow-ticket INC000000389936 
+    snow-ticket INC000000389936
     snow-ticket TASK0029147
     snow-ticket REQ000181628
     snow-ticket RITM82493

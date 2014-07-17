@@ -2,23 +2,23 @@
 
 =head1 NAME
 
-snow-incident-assign - prints useful information about a Service Now incident
+snow-ticket-assign - assign a Service Now ticket to a user/group
 
 =head1 SYNOPSIS
 
-B<snow-incident-assign> F<INCIDENT_NUMBER> --group I<GROUP>
+B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP>
 
-B<snow-incident-assign> F<INCIDENT_NUMBER> --user I<USER> 
+B<snow-ticket-assign> F<INCIDENT_NUMBER> --user I<USER> 
 
-B<snow-incident-assign> F<INCIDENT_NUMBER> --group I<GROUP> --user I<USER>
+B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP> --user I<USER>
 
-B<snow-incident-assign> F<INCIDENT_NUMBER> --user ''
+B<snow-ticket-assign> F<INCIDENT_NUMBER> --user ''
 
-B<snow-incident-assign> --man
+B<snow-ticket-assign> --man
 
 =head1 DESCRIPTION
 
-snow-incident-assign updates, the B<assigned_to> field, the B<assignment_group>
+snow-ticket-assign updates, the B<assigned_to> field, the B<assignment_group>
 field, or both, for a specified Incident number.  The updated Incident
 information is then printed to STDOUT.
 
@@ -83,8 +83,8 @@ unless (defined $USER or defined $GROUP) {
     error_usage ("must define a user (may be blank), a group, or both");
 }
 
-my ($incnum, @rest) = @ARGV;
-error_usage ("no incident listed" ) unless ($incnum);
+my ($tktnum, @rest) = @ARGV;
+error_usage ("no tkt listed" ) unless ($tktnum);
 
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
@@ -94,17 +94,17 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up incident '$incnum'";
-my @incident = $SNOW->incident_by_number ($incnum);
-unless (@incident) { die "unable to load incident: '$incnum'\n"; }
-unless (scalar @incident == 1) {
-    die "too many matches for incident '$incnum'\n";
+debug "Looking up tkt '$tktnum'";
+my @tkt = $SNOW->tkt_by_number ($tktnum);
+unless (@tkt) { die "unable to load tkt: '$tktnum'\n"; }
+unless (scalar @tkt == 1) {
+    die "too many matches for tkt '$tktnum'\n";
 }
-my $inc = $incident[0];
+my $tkt = $tkt[0];
 
-debug sprintf ("Assigning incident to %s/%s",
+debug sprintf ("Assigning tkt to %s/%s",
     $GROUP || '*none*', $USER || '*none*');
-my @return = $SNOW->incident_assign ($$inc{'number'}, $GROUP, $USER);
+my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP, $USER);
 
 my $return = 0;
 if (scalar @return > 1) {
@@ -116,10 +116,10 @@ if (scalar @return > 1) {
 }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_short ($SNOW->incident_by_number($incnum));
+    if (ref $ret && $ret->{number} eq $tkt->{number}) {
+        print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number($tktnum));
     } elsif (ref $ret) {
-        print "returned object did not match our original incident number";
+        print "returned object did not match our original tkt number";
         print scalar $SNOW->tkt_string_short ($ret);
         $return = 1;
     } else {
@@ -140,7 +140,7 @@ exit $return;
 
 =item I<INCIDENT_NUMBER>
 
-ID of an incident number to update.  You can leave off the F<INC0+> values.
+ID of a ticket number to update.  You can leave off the F<INC0+> values.
 
 =item B<--config> I<CONFIG>
 
@@ -150,12 +150,12 @@ Print debugging information on STDERR.
 
 =item B<--group> I<GROUP>
 
-Assign the incident to group I<GROUP>.  No default; if we don't get a value, we
+Assign the ticket to group I<GROUP>.  No default; if we don't get a value, we
 won't set the assignment_group value.
 
 =item B<--user> I<USER>
 
-Assign the incident to user I<USER>.  No default; if we don't get a value, we
+Assign the ticket to user I<USER>.  No default; if we don't get a value, we
 won't update the assigned_to value.
 
 =item B<--help>
@@ -172,10 +172,8 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-=head1 EXAMPLES
-
-    snow-incident-assign 389936 --group CMS-CIS
-    snow-incident INC000000389936 --type debug
+    snow-ticket-assign INC389936 --group CMS-CIS
+    snow-ticket-assign INC389936 --group CMS-CIS --user tskirvin
 
 =head1 AUTHOR
 

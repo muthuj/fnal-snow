@@ -2,18 +2,18 @@
 
 =head1 NAME
 
-snow-incident-journal - adds a journal entry for a Service Now incident
+snow-ticket-resolve - resolves a Service Now ticket
 
 =head1 SYNOPSIS
 
-B<snow-incident-journal> F<INCIDENT_NUMBER> F<TEXT>
+B<snow-ticket-resolve> F<INCIDENT_NUMBER> F<TEXT>
 
-B<snow-incident-journal> --man
+B<snow-ticket-resolve> --man
 
 =head1 DESCRIPTION
 
-snow-incident-journal adds new journal entries for a specified Incident number.
-The updated Incident information is then printed to STDOUT.
+snow-ticket-resolve resolves a specified Incident number.  The updated
+Incident information is then printed to STDOUT.
 
 =cut
 
@@ -23,11 +23,11 @@ The updated Incident information is then printed to STDOUT.
 
 # these should move
 use lib '/home/tskirvin/rpm/fnal-snow/lib';
-our $CONFIG_FILE = '/home/tskirvin/rpm/fnal-snow/etc/snow/config.yaml';
+our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
-our $TYPE  = 'work_notes';
 our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
+our $CODE  = 'Other (must describe below)';
 
 ##############################################################################
 ### Declarations #############################################################
@@ -66,14 +66,12 @@ my $result = $parser->getoptions (
     'd|debug'  => \$DEBUG,
     'c|config' => \$CONFIG_FILE,
     'u|user=s' => \$USER,
-    't|type=s' => \$TYPE,
+    'code=s'   => \$CODE,
     'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-error_usage ("invalid type: $TYPE") unless $TYPE =~ /^(work_notes|comment)$/;
-
-my ($incnum, @rest) = @ARGV;
-error_usage ("no incident listed") unless ($incnum);
+my ($tktnum, @rest) = @ARGV;
+error_usage ("no tkt listed") unless ($tktnum);
 
 my $text = join (' ', @rest);
 error_usage ('no text provided') if $text eq '';
@@ -85,18 +83,24 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up incident '$incnum'";
-my @incident = $SNOW->incident_by_number ($incnum);
-unless (@incident) { die "unable to load incident: '$incnum'\n"; }
-unless (scalar @incident == 1) {
-    die "too many matches for incident '$incnum'\n";
+debug "Looking up ticket '$tktnum'";
+my @tkt = $SNOW->tkt_by_number ($tktnum);
+unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
+unless (scalar @tkt == 1) {
+    die "too many matches for ticket '$tktnum'\n";
 }
-my $inc = $incident[0];
+my $tkt = $tkt[0];
 
-debug "Adding journal entry";
+if ($SNOW->tkt_is_resolved ($tkt)) {
+    print "tkt is already resolved: '$tktnum'\n";
+    print scalar $SNOW->tkt_string_resolution ($tkt);
+    exit 1;
+}
 
-my @return = $SNOW->tkt_update ($$inc{'number'},
-    $TYPE => "$USER: $text", 'type' => $TYPE);
+debug "Closing ticket";
+my @return = $SNOW->tkt_resolve ($$tkt{'number'},
+    'text' => $text, 'close_code' => $CODE,
+    'user' => $USER );
 
 my $return = 0;
 if (scalar @return > 1) {
@@ -108,10 +112,10 @@ if (scalar @return > 1) {
 }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->incident_by_number($incnum));
+    if (ref $ret && $ret->{number} eq $tkt->{number}) {
+        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number($tktnum));
     } elsif (ref $ret) {
-        print "returned object did not match our original incident number";
+        print "returned object did not match our original ticket number";
         print scalar $SNOW->tkt_string_base ($ret);
         $return = 1;
     } else {
@@ -132,7 +136,7 @@ exit $return;
 
 =item I<INCIDENT_NUMBER>
 
-ID of an incident number to update.  You can leave off the F<INC0+> values.
+ID of an tkt number to update.  You can leave off the F<INC0+> values.
 
 =item I<TEXT>
 
@@ -164,7 +168,7 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLES
 
-    snow-incident-journal 389936 "testing"
+    snow-ticket-resolve 389936 "testing"
 
 =head1 AUTHOR
 

@@ -2,18 +2,18 @@
 
 =head1 NAME
 
-snow-incident-reopen - re-opens a Service Now incident
+snow-ticket-journal - adds a journal entry for a Service Now ticket
 
 =head1 SYNOPSIS
 
-B<snow-incident-reopen> F<INCIDENT_NUMBER>
+B<snow-ticket-journal> F<TICKET_NUMBER> F<TEXT>
 
-B<snow-incident-reopen> --man
+B<snow-ticket-journal> --man
 
 =head1 DESCRIPTION
 
-snow-incident-reopen re-opens a specified Incident number.  The updated
-Incident information is then printed to STDOUT.
+snow-ticket-journal adds new journal entries for a specified ticket number.
+The updated ticket information is then printed to STDOUT.
 
 =cut
 
@@ -26,8 +26,8 @@ use lib '/home/tskirvin/rpm/fnal-snow/lib';
 our $CONFIG_FILE = '/home/tskirvin/rpm/fnal-snow/etc/snow/config.yaml';
 
 our $DEBUG = 0;
+our $TYPE  = 'work_notes';
 our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
-our $CODE  = 'Other (must describe below)';
 
 ##############################################################################
 ### Declarations #############################################################
@@ -66,12 +66,17 @@ my $result = $parser->getoptions (
     'd|debug'  => \$DEBUG,
     'c|config' => \$CONFIG_FILE,
     'u|user=s' => \$USER,
-    'code=s'   => \$CODE,
+    't|type=s' => \$TYPE,
     'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-my ($incnum, @rest) = @ARGV;
-error_usage ("no incident listed") unless ($incnum);
+error_usage ("invalid type: $TYPE") unless $TYPE =~ /^(work_notes|comment)$/;
+
+my ($tktnum, @rest) = @ARGV;
+error_usage ("no tkt listed") unless ($tktnum);
+
+my $text = join (' ', @rest);
+error_usage ('no text provided') if $text eq '';
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -80,22 +85,18 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up incident '$incnum'";
-my @incident = $SNOW->incident_by_number ($incnum);
-unless (@incident) { die "unable to load incident: '$incnum'\n"; }
-unless (scalar @incident == 1) {
-    die "too many matches for incident '$incnum'\n";
+debug "Looking up tkt '$tktnum'";
+my @tkt = $SNOW->tkt_by_number ($tktnum);
+unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
+unless (scalar @tkt == 1) {
+    die "too many matches for ticket '$tktnum'\n";
 }
-my $inc = $incident[0];
+my $inc = $tkt[0];
 
-unless ($SNOW->tkt_is_resolved ($inc)) {
-    print "incident is not closed: '$incnum'\n";
-    print scalar $SNOW->tkt_string_base ($inc);
-    exit 1;
-}
+debug "Adding journal entry";
 
-debug "Reopening incident";
-my @return = $SNOW->tkt_reopen ($$inc{'number'});
+my @return = $SNOW->tkt_update ($$inc{'number'},
+    $TYPE => "$USER: $text", 'type' => $TYPE);
 
 my $return = 0;
 if (scalar @return > 1) {
@@ -108,9 +109,9 @@ if (scalar @return > 1) {
 
 foreach my $ret (@return) {
     if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->incident_by_number($incnum));
+        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number ($tktnum));
     } elsif (ref $ret) {
-        print "returned object did not match our original incident number";
+        print "returned object did not match our original tkt number";
         print scalar $SNOW->tkt_string_base ($ret);
         $return = 1;
     } else {
@@ -129,15 +130,23 @@ exit $return;
 
 =over 4
 
-=item I<INCIDENT_NUMBER>
+=item I<TICKET_NUMBER>
 
-ID of an incident number to update.  You can leave off the F<INC0+> values.
+ID of a ticket number to update.
+
+=item I<TEXT>
+
+Text to enter into the journal entry.
 
 =item B<--config> I<CONFIG>
 
 =item B<--debug>
 
 Print debugging information on STDERR.
+
+=item B<--user> I<USER>
+
+The user listed in the submitted text; defaults to $ENV{'USER'} or the running uid.
 
 =item B<--help>
 
@@ -155,7 +164,7 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLES
 
-    snow-incident-reopen 389936 "testing"
+    snow-ticket-journal INC389936 "testing"
 
 =head1 AUTHOR
 

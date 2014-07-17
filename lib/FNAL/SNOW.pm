@@ -201,7 +201,7 @@ a separate class).
 
 =over 4
 
-=item incident_assign (I<NUMBER>, I<GROUP>, I<USER>)
+=item tkt_assign (I<NUMBER>, I<GROUP>, I<USER>)
 
 Assigns incident I<NUMBER> to a given group and/or user.  If we are given
 a blank value for I<USER>, we willclear the assignment field.  Returns an
@@ -209,15 +209,17 @@ array of updated Incident hashrefs (hopefully just one!).
 
 =cut
 
-sub incident_assign {
+sub tkt_assign {
     my ($self, $number, $group, $user) = @_;
 
-    my $update = {};
-    if ($group)        { $$update{'assignment_group'} = $group }
-    if (defined $user) { $$update{'assigned_to'}    = $user || 0 }
+    my %update = ();
+    if ($group)        { $update{'assignment_group'} = $group }
+    if (defined $user) { $update{'assigned_to'}    = $user || 0 }
 
-    return $self->update ('incident', { 'number' => $number }, $update);
+    return $self->tkt_update ($number, %update);
 }
+
+sub incident_assign { shift->tkt_assign ('Incident', @_) }
 
 =item tkt_list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
 
@@ -253,60 +255,14 @@ sub tkt_list_by_assignee {
 
 sub incident_list_by_assignee { shift->tkt_list_by_assignee ('Incident', @_) }
 
-=item incident_by_number (I<NUMBER>)
-
-Queries for the incident I<NUMBER> (after passing that field through
-B<parse_incident_number()> for consistency).  Returns an array of matching
-entries.
-
-=cut
-
-sub incident_by_number {
-    my ($self, $number) = @_;
-    my $num = $self->parse_incident_number ($number);
-    return $self->incident_list ({ 'number' => $num });
-}
-
-=item incident_list_by_submit (I<NAME>, I<EXTRA>)
-
-Queries for incidents submitted by the user I<NAME>.  Returns an array of
-matching entries.
-
-=cut
-
-sub incident_list_by_submit {
-    shift->incident_list ( { 'assigned_to' => shift }, shift )
-}
-
-=item incident_list_by_username (I<USER>)
-
-Queries for incidents belonging to groups associated with user I<USER>.
-Returns an array of matching entries.
-
-=cut
-
-sub incident_list_by_username {
-    my ($self, $name) = @_;
-    my @groups = $self->groups_by_username ($name);
-    my @entries;
-    foreach my $group (@groups) {
-        my $grpname = $$group{'name'};
-        push @entries, $self->query ('incident', {
-            'assignment_group' => $grpname
-        });
-    }
-    return @entries;
-}
-
-
-=item parse_incident_number (NUMBER)
+=item parse_ticket_number (NUMBER)
 
 Standardizes an incident number into the 15-character string starting with
 'INC' (or similar).
 
 =cut
 
-sub parse_incident_number {
+sub parse_ticket_number {
     my ($self, $num) = @_;
     return $num if $num && $num =~ /^(INC|REQ)/ && length ($num) == 15;
     return $num if $num && $num =~ /^(TASK|RITM)/ && length ($num) == 11;
@@ -454,14 +410,22 @@ These should ideally work against incidents, tasks, requests, etc.
 
 =item tkt_by_number
 
+Queries for the ticket I<NUMBER> (after passing that field through
+B<parse_ticket_number()> for consistency and to figure out what kind of ticket
+we're looking at).  Returns an array of matching entries.
+
 =cut
 
 sub tkt_by_number {
     my ($self, $number) = @_;
-    my $num = $self->parse_incident_number ($number);
+    my $num = $self->parse_ticket_number ($number);
     my $type = $self->_tkt_type_by_number ($num);
     return $self->tkt_search ($type, { 'number' => $num });
 }
+
+=item tkt_search (TYPE, SEARCH, EXTRA)
+
+=cut
 
 sub tkt_search {
     my ($self, $type, $search, $extra) = @_;

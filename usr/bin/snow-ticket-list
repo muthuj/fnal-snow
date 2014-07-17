@@ -2,7 +2,7 @@
 
 =head1 NAME
 
-snow-ticket-list - lists matching Service Now incidents
+snow-ticket-list - lists matching Service Now tickets
 
 =head1 SYNOPSIS
 
@@ -21,7 +21,7 @@ B<snow-ticket-list> --man
 =head1 DESCRIPTION
 
 snow-ticket-list prints ticket summaries for matching entries in the Service
-Now incident table.  
+Now ticket tables.  
 
 Note that each query can match a maximum of 250 entries.
 
@@ -208,6 +208,17 @@ For most query types we can further filter based on subquerys.  Specifically:
     unresolved      Only show unresolved tickets.
 
 Applies to types F<group>, F<assign>, or F<submit>.
+
+=item B<--type> F<TABLE>
+
+Chooses which ticket type to query.  Choices:
+
+    incident        Incident
+    request         Request
+    ritm            Request Item
+    task            Task        
+
+Defaults to F<incident>.
 
 =item B<--user> F<USER>
 
