@@ -7,6 +7,6 @@ WriteMakefile(
     VERSION_FROM  => 'lib/FNAL/SNOW.pm',
     AUTHOR        => 'Tim Skirvin <tskirvin@fnal.edu>',
     PREREQ_PM     => {
-        'ServiceNow' => '1.08',
+        'ServiceNow' => '1.00',
     },
 );

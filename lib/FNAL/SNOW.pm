@@ -1,4 +1,5 @@
 package FNAL::SNOW;
+our $VERSION = "1.00";
 
 =head1 NAME
 
@@ -191,10 +192,10 @@ sub update {
 =cut
 
 ##############################################################################
-### Incident Subroutines #####################################################
+### Ticket Subroutines #######################################################
 ##############################################################################
 
-=head2 Incidents
+=head2 Tickets
 
 These subroutines manipulate Incidents.  (They should probably be moved off to
 a separate class).
@@ -203,9 +204,9 @@ a separate class).
 
 =item tkt_assign (I<NUMBER>, I<GROUP>, I<USER>)
 
-Assigns incident I<NUMBER> to a given group and/or user.  If we are given
-a blank value for I<USER>, we willclear the assignment field.  Returns an
-array of updated Incident hashrefs (hopefully just one!).
+Assigns ticket I<NUMBER> to a given group and/or user.  If we are given a blank
+value for I<USER>, we will clear the assignment field.  Returns an array of
+updated Incident hashrefs (hopefully just one!).
 
 =cut
 

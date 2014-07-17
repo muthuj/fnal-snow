@@ -24,14 +24,19 @@ Now interface.
 %setup -c -n %{name}-%{version}-%{release}
 
 %build
-# Empty build section added per rpmlint
+%{__perl} perl/Makefile.PL
+%{__make} PREFIX=%{_prefix}
 
 %install
-if [[ $RPM_BUILD_ROOT != "/" ]]; then
-    rm -rf $RPM_BUILD_ROOT
-fi
+%%{__make} install PREFIX=$RPM_BUILD_ROOT%{_prefix}
 
 rsync -Crlpt ./usr ${RPM_BUILD_ROOT}
+
+mkdir -p ${RPM_BUILD_ROOT}/usr/share/man/man1
+for i in `ls usr/bin`; do
+    pod2man --section 1 --center="System Commands" usr/bin/${i} \
+        > ${RPM_BUILD_ROOT}/usr/share/man/man1/${i}.1 ;
+done
 
 %clean
 # Adding empty clean section per rpmlint.  In this particular case, there is 
