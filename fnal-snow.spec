@@ -24,13 +24,11 @@ Now interface.
 %setup -c -n %{name}-%{version}-%{release}
 
 %build
-%{__perl} perl/Makefile.PL
-%{__make} PREFIX=%{_prefix}
 
 %install
-%%{__make} install PREFIX=$RPM_BUILD_ROOT%{_prefix}
-
+mkdir -p ${RPM_BUILD_ROOT}/usr/share/perl5/vendor_perl
 rsync -Crlpt ./usr ${RPM_BUILD_ROOT}
+rsync -Crlpt ./lib/ ${RPM_BUILD_ROOT}/usr/share/perl5/vendor_perl
 
 mkdir -p ${RPM_BUILD_ROOT}/usr/share/man/man1
 for i in `ls usr/bin`; do
@@ -43,6 +41,10 @@ done
 # nothing to clean up as there is no build process
 
 %files
+%defattr(-,root,root)
+/usr/bin/*
+/usr/share/man/man1/*
+/usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
 * Mon Jul 07 2014   Tim Skirvin <tskirvin@fnal.gov>   0-1
