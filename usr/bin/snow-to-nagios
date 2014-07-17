@@ -1,0 +1,328 @@
+#!/usr/bin/perl
+# Description: Scan open SNOW incidents and reopen tickets as necessary
+# This script will also take assignment events from SNOW and apply them
+# to Nagios.
+
+##############################################################################
+### Configuration ############################################################
+##############################################################################
+
+use lib '/home/tskirvin/rpm/cms-monitor/lib';
+
+# our $CONFIG_FILE = '/etc/snow/config.yaml';
+our $CONFIG_FILE = '/home/tskirvin/rpm/cms-monitor/etc/snow/config.yaml';
+our $CONFIG = SNOW::config_yaml ($CONFIG_FILE);
+
+our $DEBUG = 0;
+
+
+##############################################################################
+### Declarations #############################################################
+##############################################################################
+
+use strict;
+use warnings;
+
+use SNOW;
+use SNOW::Incident;
+
+use Data::Dumper;
+use Getopt::Long;
+use MIME::Lite;
+use Monitoring::Livestatus;
+use Pod::Usage;
+use ServiceNow;
+use ServiceNow::Configuration;
+use Sys::Hostname;
+
+my $args = {
+   snURL         => 'https://fermi.service-now.com/',
+   snUsername    => 'cd-srv-fasdff-nagios',
+   snPassword    => 'aasdfy',
+   watch_list    => 'somebody@fnal.gov',
+   directory     => '/opt/omd/servicenow_incidents',
+   omd_site_base => '/omd/sites',
+   caller        => 'Fasdf-nagios System',
+};
+
+##############################################################################
+### Subroutines ##############################################################
+##############################################################################
+
+### debug (MSG)
+# Print a debugging message if $DEBUG is set.
+sub debug { if ($DEBUG) { warn "@_\n" } }
+
+sub print_1 { print sprintf ("  - %-20s: %s\n", @_ ) }
+sub debug_2 { if ($DEBUG) { warn sprintf ("    %s\n", @_ ) } }
+
+### error_usage (ERROR)
+# Exit out with pod2usage.
+sub error_usage {
+    my ($error) = @_;
+    pod2usage (-exit_status => 2, -verbose => 1);
+}
+
+### nagiosSocket (SOCKET_NAME, QUERY)
+# Interact with the Monitoring::Livestatus configuration.
+sub nagiosSocket {
+    my ($socketName, $query) = @_;
+
+    my $socketLocation = $args->{omd_site_base}."/".$socketName."/tmp/run/live";
+    my $ml = Monitoring::Livestatus->new(
+        socket   => $socketLocation,
+        warnings => 0,
+        timeout  => 10,
+    );
+    return $ml->selectcol_arrayref($query);
+}
+
+##############################################################################
+### main () ##################################################################
+##############################################################################
+
+my $parser = Getopt::Long::Parser->new();
+my $result = $parser->getoptions (
+
+    'incidentDir=s' => sub { $CONFIG->{cachedir} = $_[1] },
+
+    ## Service Now Parameters
+    'snURL=s'       => sub { set_config ('servicenow', 'url',      @_ ) },
+    'snPassword=s'  => sub { set_config ('servicenow', 'password', @_ ) },
+    'snUsername=s'  => sub { set_config ('servicenow', 'username', @_ ) },
+
+    'd|debug'  => \$DEBUG,
+    'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
+    'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
+
+$SNOW::Incident::BASEDIR = $CONFIG->{cachedir};
+my @incidents = SNOW::Incident->read_dir ($CONFIG->{cachedir});
+
+debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
+my $SN = SNOW::connect_to_sn ($CONFIG);
+
+foreach my $incident (@incidents) {
+    if (my $number = $incident->incident) {
+        my ($host, $sname, $id) = split (':', $incident->sname);
+
+        print SNOW::nagios_url ($host, $sname), "\n";
+        print_1 ('Incident Number', $number);
+        print_1 ('Hostname', $host);
+        print_1 ('Filename', $incident->filename);
+
+        debug "Querying SN for information on '$number'";
+        my @inc = $SN->queryIncident ( {'number' => $number } );
+        if (scalar @inc > 1) {
+            print " - ERROR: too many entries returned for $number\n";
+            next;
+        } elsif (scalar @inc < 1) {
+            print " - ERROR: SNOW Incident could not be found.\n";
+            next;
+        }
+        my $inc = $inc[0];
+
+        my $assigned = $inc->{dv_assigned_to}      || '';
+        my $status   = $inc->{dv_incident_state}   || 'Unknown';
+        my $caller   = $inc->{dv_caller_id}        || '';
+        my $group    = $inc->{dv_assignment_group} || '';
+
+        print_1 ('Assigned To',    $assigned);
+        print_1 ('Incident State', $status);
+        print_1 ('Caller',         $caller);
+
+        foreach my $key (sort keys %$inc) {
+            warn "$key: " . ( $$inc{$key} || '' ) . "\n";
+        }
+    }
+}
+
+exit -1;
+
+=cut
+
+        if ($caller_id ne $args->{caller}) {
+             print " - ERROR: SNOW Incident was not opened by user:($args->{caller}).  This script will ignore this incident.\n";
+             next;
+        }
+
+        ### Check Nagios Ticket status and cleanup SNOW if necessary
+        my $recovery=0;
+
+        if (defined($sname) && $sname ne '') {
+            my $nagiosLookup = nagiosSocket($fileOwner,
+                "GET hosts\nColumns: services_with_state\nFilter: host_name = $host");
+            if (exists $nagiosLookup->[0]) {
+                my $arrayLength=length($nagiosLookup->[0]);
+                for (my $count = 0; $count < $arrayLength; $count++) {
+                    if ($nagiosLookup->[0][$count][0] eq $sname
+                        && $nagiosLookup->[0][$count][1] == 0) {
+                        $recovery=1;
+                    }
+                }
+            } else {
+                print " - ERROR: Nagios Status could not be determined.  Skipping...\n";
+                next;
+            }
+         }
+         if ($host && !defined($serviceAlert) && $fileSNAME eq "") {
+             my $nagiosLookup = nagiosSocket($fileOwner, "GET hosts\nColumns: state\nFilter: host_name = $hostname");
+             if (exists $nagiosLookup->[0]) {
+                 if ($nagiosLookup->[0] == 0) {
+                     $recovery=1;
+                 }
+             } else {
+                 print " - ERROR: Nagios Status Could not be determined.  Skippping...\n";
+                 next;
+             }
+         }
+         if ($recovery) {
+             if ($IncStatus eq "Resolved" || $IncStatus eq "Cancelled") {
+                 print " - NOTICE: SNOW incident has already been marked resolved, deleting $fullSpec.\n";
+                 unlink $fullSpec or die "File: ($fullSpec) could not be removed from the system";
+             } else {
+                 print " - NOTICE: Nagios should have closed this ticket already, closing ticket now.\n";
+
+$SN->appendJournal($fileIncNumber,'work_notes',"[code]<br><b>Automated Message</b>: Service has recovered.[/code]");
+                 $SN->updateIncident($fileIncNumber,{'close_code' =>
+'Other (must describe below)'});
+                 $SN->updateIncident($fileIncNumber,{'close_notes' =>
+'The monitoring system has determined that this host/service has been
+restored.'});
+                 $SN->updateIncident($fileIncNumber,{'closed_by' =>
+"$args->{snUsername}"});
+                 $SN->updateIncident($fileIncNumber,{'incident_state' => '6'});
+             }
+             next;
+         }
+        if    ($IncStatus =~ /Resolved|Cancelled/) {
+            if ($fileAck ne "yes") {
+                # Reset Incident State
+                print " - ERROR: Service-Now indicates a status of ($IncStatus) while the event is unacknowledged in nagios.  Changing status of ticket back to Assigned.\n";
+
+                $SN->updateIncident($fileIncNumber,{'incident_state' => '1'});
+
+                # Add individuals to the watch_list
+                $SN->updateIncident($fileIncNumber,{'watch_list' => $args->{watch_list}});
+                # Append Comment to the ticket
+                $SN->appendJournal($fileIncNumber,'comments',"Incident resolved within SNOW while the issue has *not* been acknowledged within Nagios.  Incident state is being reset to \"Assigned\".");
+            }
+        }
+
+        elsif ($IncStatus =~ /Unknown/i) {
+            print " - ERROR: SNOW Incident Status could not be detected.\n";
+        }
+
+        else {
+            if ($fileAck ne "yes") {
+                print " - Acknowledged: No\n";
+                if ($fullName ne "") {
+                    my $config = ServiceNow::Configuration->new($CONFIG);
+                    my $glideRecord =  ServiceNow::GlideRecord->new($config,'sys_user');
+                    $glideRecord->addQuery('name',$fullName);
+                    $glideRecord->query();
+                    while ($glideRecord->next()) {
+                        ($username) = $glideRecord->getDisplayValue("email") =~ /(.*)@.*/;
+                    }
+                }
+                if ($username ne "") {
+                    print " - Full Name: $fullName\n";
+                    print " - Email Address: $username\n";
+                    # Append ACK To Filename
+                    unless (open FILE, '>>'.$fullSpec) {
+                        die "\nUnable to open $fullSpec\n";
+                    }
+                    if (defined($serviceAlert)) {
+                        if ($fileSNAME ne "") {
+                            print " - Command: Execute Service Alert\n";
+                            system("/usr/local/bin/ack_service_problem.py",
+                                "--hostname=$hostname", "--service='$fileSNAME'", "--user=$username",
+                                "--comment='$fileIncNumber: Acknowledged within SNOW'","--site=$fileOwner"
+                            );
+                        } else {
+                            die "We've determined there is a service alert based on name $fullSpec, however the SNAME var is undefined...";
+                        }
+                    } else {
+                        print " - Command: Execute Host Alert\n";
+
+system("/usr/local/bin/ack_host_problem.py", "--hostname=$hostname",
+"--comment=$fileIncNumber: Acknowledged within SNOW",
+"--user=$username","--site=$fileOwner")
+                         }
+                         print FILE "ACK=yes\n";
+                         close FILE;
+                     }
+                } else {
+                    print " - Acknowledged: Yes\n";
+                }
+            }
+        }
+    } else {
+        print " - ERROR: File does not contain an Incident Number\n";
+    }
+}
+
+
+__END__
+
+##############################################################################
+### Documentation ############################################################
+##############################################################################
+
+=head1 NAME
+
+snow-to-nagios - scan open SNOW incidents and re-open tickets as necessary
+
+=head1 SYNOPSIS
+
+snow-to-nagios [options]
+
+=head1 DESCRIPTION
+
+Scans open SNOW incidents and reopen tickets if needbe.  This script will also
+take assignment events from SNOW and apply them to Nagios.
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--help>
+
+Print a brief help message and exits.
+
+=item B<--man>
+
+Prints the man page and exits.
+
+=item B<--snURL>
+
+String: ServiceNow URL
+
+=item B<--snUsername>
+
+String: ServiceNow Username
+
+=item B<--snPassword>
+
+String: ServiceNow Password
+
+=item B<--incidentDir>
+
+String: Directory where SNOW incident files are kept
+
+=back
+
+=head1 EXAMPLES
+
+=over 4
+
+=item Testing Example:
+
+snow-to-nagios --snUrl=https://fermirtn.service-now.com/  --incidentDir=/opt/omd/servicenow_incidents_trn
+
+=back
+
+=head1 AUTHOR
+
+Written by Tyler Parsons.
+
+=cut
