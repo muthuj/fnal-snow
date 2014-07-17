@@ -167,6 +167,8 @@ Should end with a trailing '/'.
 
 =back
 
+=back
+
 =head1 REQUIREMENTS
 
 B<YAML::Syck>

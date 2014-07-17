@@ -31,7 +31,6 @@ Note that each query can match a maximum of 250 entries.
 ### Configuration ############################################################
 ##############################################################################
 
-use lib '/home/tskirvin/rpm/fnal-snow/lib';
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 ## Default values, these should all be accessible via command-line parameters

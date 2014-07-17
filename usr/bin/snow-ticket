@@ -24,9 +24,7 @@ relevant information (selected at the module level).
 ### Configuration ############################################################
 ##############################################################################
 
-# these should move
-use lib '/home/tskirvin/rpm/fnal-snow/lib';
-our $CONFIG_FILE = '/home/tskirvin/rpm/fnal-snow/etc/snow/config.yaml';
+our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
 our $TYPE = 'base';
