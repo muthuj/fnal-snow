@@ -56,6 +56,7 @@ Most query types also support further filtering based on a subquery:
 
 Some useful queries:
 
+    snow-ticket-list --help
     snow-ticket-list --query assign
     snow-ticket-list --query group  --user `whoami`
     snow-ticket-list --query submit --user `whoami` --subquery closed
