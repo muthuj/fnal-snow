@@ -1,5 +1,5 @@
 package FNAL::SNOW;
-our $VERSION = "1.00";
+our $VERSION = "1.01";
 
 =head1 NAME
 
@@ -142,6 +142,24 @@ These subroutines perform direct database queries, using B<ServiceNow::GlideReco
 
 =over 4
 
+=item create (TABLE, PARAMS)
+
+Inserts a new item into the Service Now database in table I<TABLE> and based
+on the parameters in the hashref I<PARAMS>.  Returns the matching items (as
+pulled from another query based on the returned sys_id).
+
+=cut
+
+sub create {
+    my ($self, $table, $params) = @_;
+    my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
+    my $id = $glide->insert ($params);
+    return unless $id;
+    return $self->query ($table, {'sys_id' => $id} )
+}
+
+sub insert { create (@_) }
+
 =item query (TABLE, PARAMS)
 
 Queries the Service Now database, looking specifically at table I<TABLE> with
@@ -149,6 +167,8 @@ parameters stored in the hashref I<PARAMS>.  Returns an array of matching
 entries.
 
 =cut
+
+sub read { query(@_) }
 
 sub query {
     my ($self, $table, $params) = @_;
@@ -426,15 +446,18 @@ sub tkt_by_number {
     return $self->tkt_search ($type, { 'number' => $num });
 }
 
-=item tkt_search (TYPE, SEARCH, EXTRA)
+=item tkt_create (
+
+Creates a new ticket of type I<TYPE>, and returns the number of the created
+ticket (or undef on failure).
 
 =cut
 
-sub tkt_search {
-    my ($self, $type, $search, $extra) = @_;
-    if ($extra) { $$search{'__encoded_query'} = $extra }
-    my @entries = $self->query($type, $search );
-    return @entries;
+sub tkt_create {
+    my ($self, $type, %ticket) = @_;
+    my @items = $self->create ($type, \%ticket);
+    return undef unless (@items && scalar @items == 1);
+    return $items[0]->{number};
 }
 
 =item tkt_is_resolved (CODE)
@@ -491,6 +514,20 @@ sub tkt_resolve {
     );
     return $self->tkt_update ($code, %update);
 }
+
+=item tkt_search (TYPE, SEARCH, EXTRA)
+
+Search for a ticket.
+
+=cut
+
+sub tkt_search {
+    my ($self, $type, $search, $extra) = @_;
+    if ($extra) { $$search{'__encoded_query'} = $extra }
+    my @entries = $self->query($type, $search );
+    return @entries;
+}
+
 
 =item tkt_update (CODE, ARGUMENTS)
 

@@ -2,27 +2,17 @@
 
 =head1 NAME
 
-snow-ticket-assign - assign a Service Now ticket to a user/group
+snow-ticket-create - assign a Service Now ticket to a user/group
 
 =head1 SYNOPSIS
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP>
+echo "test" | B<snow-ticket-create> --subject I<TEXT> --group I<GROUP>
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --user I<USER> 
-
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP> --user I<USER>
-
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --user ''
-
-B<snow-ticket-assign> --man
+B<snow-ticket-create> --man
 
 =head1 DESCRIPTION
 
-snow-ticket-assign updates, the B<assigned_to> field, the B<assignment_group>
-field, or both, for a specified Incident number.  The updated Incident
-information is then printed to STDOUT.
-
-Note that if you want to clear the assignment field, you can set I<--user ''>.
+snow-ticket-create creates and assigns a new Incident.
 
 =cut
 
@@ -33,8 +23,9 @@ Note that if you want to clear the assignment field, you can set I<--user ''>.
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
+our $TYPE = 'incident';
 
-use vars qw/$USER $GROUP/;
+use vars qw/$USER $GROUP $SUBJECT $TICKET_FILE/;
 
 ##############################################################################
 ### Declarations #############################################################
@@ -46,6 +37,7 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 use FNAL::SNOW;
+use YAML::Syck;
 
 $|++;
 
@@ -60,9 +52,25 @@ sub error_usage {
     pod2usage (-msg => $error, -exit_status => 2, -verbose => 1);
 }
 
+### load_yaml (FILE)
+# Load a configuration file from YAML
+sub load_yaml {
+    my ($file) = @_;
+    my $yaml = YAML::Syck::LoadFile ($file);
+    unless ($yaml) { die "could not open $file: $@\n" }
+    return $yaml;
+}
+
 ### debug (MSG)
 # Print a debugging message if $DEBUG is set.
 sub debug { if ($DEBUG) { warn "@_\n" } }
+
+### set_ticket (FIELD, VALUE)
+# 
+sub set_ticket { 
+    my ($ticket, $field, $value) = @_;
+    $ticket->{'ticket'}->{$field} = $value;
+}
 
 ##############################################################################
 ### main () ##################################################################
@@ -72,18 +80,23 @@ my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
     'd|debug'    => \$DEBUG,
     'c|config=s' => \$CONFIG_FILE,
+    't|ticket=s' => \$TICKET_FILE,
+    'type=s'     => \$TYPE,
     'u|user=s'   => \$USER,
+    'subject=s'  => \$SUBJECT,
     'g|group=s'  => \$GROUP,
     'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-unless (defined $USER or defined $GROUP) {
-    error_usage ("must define a user (may be blank), a group, or both");
-}
+unless (defined $GROUP) { error_usage ("must define a group") }
 
-my ($tktnum, @rest) = @ARGV;
-error_usage ("no tkt listed" ) unless ($tktnum);
+my $TICKET = load_yaml ($TICKET_FILE);
 
+debug ("Getting text on STDIN");
+my $description = join ("\n", <>);
+chomp $description;
+set_ticket ($TICKET, 'description', $description);
+set_ticket ($TICKET, 'short_description', $SUBJECT);
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -91,6 +104,10 @@ my $CONFIG = $SNOW->config_hash;
 
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
+
+debug ("creating a new entry in Service Now");
+my $tktnum = $SNOW->tkt_create ($TYPE, %{$TICKET->{ticket}});
+die "unable to create ticket\n" unless $tktnum;
 
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
@@ -134,22 +151,60 @@ exit $return;
 
 =head1 OPTIONS
 
+=head2 REQUIRED FIELDS
+
 =over 4
 
-=item I<INCIDENT_NUMBER>
+=item (STDIN)
 
-ID of a ticket number to update.  You can leave off the F<INC0+> values.
-
-=item B<--config> I<CONFIG>
-
-=item B<--debug>
-
-Print debugging information on STDERR.
+The text of the message description comes on STDIN.
 
 =item B<--group> I<GROUP>
 
 Assign the ticket to group I<GROUP>.  No default; if we don't get a value, we
 won't set the assignment_group value.
+
+=item B<--subject> I<TEXT>
+
+Corresponds to the I<short_description> field.
+
+ID of a ticket number to update.  You can leave off the F<INC0+> values.
+
+=item B<--ticket> I<YAML>
+
+The default ticket fields come from a local YAML file, which looks something
+like this:
+
+    ticket:
+        assignment_group:       'CMS-CIS'
+        group:                  'CMS-CIS'
+        impact:                 '4'
+        short_description:      '(no subject)'
+        u_categorization:       'Hardware -- Server -- Linux'
+        u_item:                 'Linux'
+        u_operational_category: 'Break/Fix'
+        u_page_primary:         '0'
+        u_reported_source:      'Event Monitoring'
+        urgency:                '4'
+        u_service:              'Scientific Services'
+        u_service_type:         'Server'
+
+Required.
+
+=back
+
+=head2 OTHER FIELDS
+
+=over4 
+
+=item B<--config> I<CONFIG>
+
+Configuration file, instead of F</etc/snow/config.yaml>.
+
+=item B<--debug>
+
+Print debugging information on STDERR.
+
 
 =item B<--user> I<USER>
 
@@ -170,8 +225,10 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-    snow-ticket-assign INC389936 --group CMS-CIS
-    snow-ticket-assign INC389936 --group CMS-CIS --user tskirvin
+=head1 EXAMPLE
+
+    echo "testing" | snow-ticket-create --ticket template.yaml \
+        --subject testing --group CMS-CIS
 
 =head1 AUTHOR
 

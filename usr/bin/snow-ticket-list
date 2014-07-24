@@ -76,14 +76,14 @@ sub debug { if ($DEBUG) { warn "@_\n" } }
 
 my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
-    't|type=s'    => \$TYPE,
-    'q|query=s'   => \$QUERY,
-    'g|group=s'   => \$GROUP,
-    'u|user=s'    => \$USER,
-    'debug'       => \$DEBUG,
-    'date=s'      => \$DATE,
-    'c|config'    => \$CONFIG_FILE,
+    't|type=s'     => \$TYPE,
+    'q|query=s'    => \$QUERY,
     's|subquery=s' => \$SUBQUERY,
+    'g|group=s'    => \$GROUP,
+    'u|user=s'     => \$USER,
+    'debug'        => \$DEBUG,
+    'date=s'       => \$DATE,
+    'c|config=s'   => \$CONFIG_FILE,
     'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
 

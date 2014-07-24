@@ -1,7 +1,7 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
 Version:        0
-Release:        2%{?dist}
+Release:        3%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
@@ -54,6 +54,10 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Wed Jul 23 2014   Tim Skirvin <tskirvin@fnal.gov>   0-3
+- adding create() and tkt_create() functions
+- general code cleanup
+
 * Mon Jul 17 2014   Tim Skirvin <tskirvin@fnal.gov>   0-2
 - cleanup and adding man pages
 

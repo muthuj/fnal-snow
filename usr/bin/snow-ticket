@@ -63,11 +63,11 @@ sub debug { if ($DEBUG) { warn "@_\n" } }
 
 my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
-    'd|debug'  => \$DEBUG,
-    'c|config' => \$CONFIG_FILE,
-    't|type=s' => \$TYPE,
-    'man'      => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
-    'h|help'   => sub { pod2usage (-verbose => 1) }) || error_usage ();
+    'd|debug'    => \$DEBUG,
+    'c|config=s' => \$CONFIG_FILE,
+    't|type=s'   => \$TYPE,
+    'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
+    'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
