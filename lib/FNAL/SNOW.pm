@@ -52,6 +52,8 @@ struct 'FNAL::SNOW' => {
     'snconf'      => '$',
 };
 
+use vars qw/%GROUPCACHE %USERCACHE %NAMECACHE/;
+
 ##############################################################################
 ### Initialization Subroutines ###############################################
 ##############################################################################
@@ -353,7 +355,7 @@ sub text_tktlist_group {
     my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
     $text = "== $text assigned to group '$group'";
     return $self->tkt_list ( $text,
-        $self->tkt_list_by_type($t, { 'assignment_group' => $group }, $extra)
+        $self->tkt_list_by_type ($t, { 'assignment_group' => $group }, $extra)
     );
 }
 
@@ -558,8 +560,8 @@ These should ideally work against incidents, tasks, requests, etc.
 
 =item tkt_list (TEXT, TICKETLIST)
 
-Given a list of ticket objects, pushes them all through B<tkt_summary()> and
-combines the text into a single object.
+Given a list of ticket objects, sorts them by number, pushes them all 
+through B<tkt_summary()>, and combines the text into a single object.
 
 =cut
 
@@ -567,7 +569,9 @@ sub tkt_list {
     my ($self, $text, @list) = @_;
     my @return;
     push @return, $text, '';
-    foreach (@list) { push @return, ($self->tkt_summary ($_), '') }
+    foreach (sort { $a->{'number'} cmp $b->{'number'} } @list) {
+        push @return, ($self->tkt_summary ($_), '') 
+    }
     wantarray ? @return : join ("\n", @return, '');
 }
 
@@ -670,8 +674,6 @@ sub tkt_string_journal {
             'Type'       => $self->_journal_type   ($journal),
         );
         push @return, '', '    ' . $self->_journal_text ($journal), '';
-        # push @return, '', $self->_format_text ({'prefix' => '    '},
-            # $self->_journal_text ($journal)), '';
     }
     return wantarray ? @return : join ("\n", @return, '');
 }
@@ -696,7 +698,6 @@ sub tkt_string_primary {
         'Urgency'       => $self->_tkt_urgency ($tkt),
         'Priority'      => $self->_tkt_priority ($tkt),
         'Service Type'  => $self->_tkt_svctype ($tkt),
-        'ITIL Status'   => $self->_tkt_stage ($tkt)
     );
     return wantarray ? @return : join ("\n", @return, '');
 }
@@ -710,9 +711,15 @@ Generates a report describing the requestor of the ticket.
 sub tkt_string_requestor {
     my ($self, $tkt) = @_;
     my @return = "Requestor Info";
+
+    my $requestor = $self->user_by_username ($self->_tkt_requestor($tkt));
+    my $createdby = $self->user_by_name ($self->_tkt_caller_id($tkt));
+
     push @return, $self->_format_text_field (
         {'minwidth' => 20, 'prefix' => '  '},
-        'Name'        => $self->_tkt_requestor ($tkt),
+        'Name'       => $$createdby{'name'},
+        'Email'      => $$createdby{'email'},
+        'Created By' => $$requestor{'name'} || $self->_tkt_opened_by ($tkt),
     );
     return wantarray ? @return : join ("\n", @return, '');
 }
@@ -768,19 +775,33 @@ suitable for presenting in list form.
 sub tkt_summary {
     my ($self, @tickets) = @_;
     my @return;
+
     foreach my $tkt (@tickets) {
+        my $cid = $self->_tkt_caller_id ($tkt);
+        my $createdby  = $self->user_by_name ($cid);
+        unless ($createdby) { 
+            my $rid = $self->_tkt_requestor($tkt);
+            $createdby = $self->user_by_username ($rid) || {};
+        }
+
+        my $assignedto = {};
+        my $aid = $self->_tkt_assigned_person ($tkt);
+        if ($aid ne '(none)') { 
+            $assignedto = $self->user_by_name ($aid);
+        }
+
         my $inc_num     = _incident_shorten ($self->_tkt_number ($tkt));
-        my $request     = $self->_tkt_requestor ($tkt);
-        my $assign      = $self->_tkt_assigned_person ($tkt);
+        my $request     = $createdby->{'dv_user_name'} || '*unknown*';
+        my $assign      = $assignedto->{'dv_user_name'} || '*unassigned*';
         my $group       = $self->_tkt_assigned_group ($tkt);
         my $status      = $self->_tkt_status ($tkt) || $self->_tkt_stage($tkt);
         my $created     = $self->_format_date ($self->_tkt_date_submit ($tkt));
         my $updated     = $self->_format_date ($self->_tkt_date_update ($tkt));
         my $description = $self->_tkt_summary ($tkt);
 
-        push @return, sprintf ("%-9s  %-15.15s  %-17.17s  %-16.16s  %14.14s",
+        push @return, sprintf ("%-12.12s %-15.15s %-15.15s %-17.17s %17.17s",
             $inc_num, $request, $assign, $group, $status );
-        push @return, sprintf (" Created: %-20.20s    Updated: %-20.20s",
+        push @return, sprintf (" Created: %-20.20s        Updated: %-20.20s",
             $created, $updated);
         push @return, sprintf (" Subject: %-70.70s", $description);
     }
@@ -799,16 +820,19 @@ sub tkt_summary {
 
 =over 4
 
-=item groups_by_groupname (I<NAME>)
+=item group_by_groupname (I<NAME>)
 
-Return an array of group entries with name I<NAME> (hopefully just one).
+Return the matching of group entries with name I<NAME> (hopefully just one).
 
 =cut
 
-sub groups_by_groupname {
+sub group_by_groupname {
     my ($self, $name) = @_;
-    my @entries = $self->query ('sys_user_group', { 'name' => $name });
-    return @entries;
+    if (defined $GROUPCACHE{$name}) { return $GROUPCACHE{$name} }
+    my @groups = $self->query ('sys_user_group', { 'name' => $name });
+    return undef unless (scalar @groups == 1);
+    $GROUPCACHE{$name} = $groups[0];
+    return $GROUPCACHE{$name};
 }
 
 =item groups_by_username (I<NAME>)
@@ -852,20 +876,53 @@ sub users_by_groupname {
     return @entries;
 }
 
-=item users_by_username (I<NAME>)
+=item user_by_name (I<NAME>)
 
-Give the user hashref associated with user I<NAME>.  Returns an array of
-matching hashrefs (hopefully just one).
+Give the user hashref associated with name I<NAME>.  Returns the first matching
+hashref.
 
 =cut
 
-sub users_by_username {
-    my ($self, $user) = @_;
-    my @entries = $self->query ('sys_user', { 'user_name' => $user });
-    return @entries;
+sub user_by_name { 
+    my ($self, $name) = @_;
+    if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
+    my @users = $self->query ('sys_user', { 'name' => $name });
+    return undef unless (scalar @users == 1);
+    $USERCACHE{$name} = $users[0];
+    return $USERCACHE{$name};
 }
 
-sub _user_by_username { (users_by_username(@_))[0] }
+
+=item user_by_username (I<NAME>)
+
+Give the user hashref associated with username I<NAME>.  Returns the first matching
+hashref.
+
+=cut
+
+sub user_by_username { 
+    my ($self, $username) = @_;
+    if (defined $USERCACHE{$username}) { return $USERCACHE{$username} }
+    my @users = $self->query ('sys_user', { 'user_name' => $username });
+    return undef unless (scalar @users == 1);
+    $USERCACHE{$username} = $users[0];
+    return $USERCACHE{$username};
+}
+
+=item user_in_group (I<USER>, I<GROUP>)
+
+Returns 1 if the given USER is in group GROUP.
+
+=cut
+
+sub user_in_group {
+    my ($self, $username, $group) = @_;
+    my @users = $self->users_by_groupname ($group);
+    foreach (@users) {
+        return 1 if $_->{dv_user_name} eq $username;
+    }
+    return 0;
+}
 
 =item user_in_groups (I<USER>)
 
@@ -1019,11 +1076,13 @@ sub _journal_entries {
 
 sub _tkt_assigned_group  { $_[1]{'dv_assignment_group'}  || '(none)'    }
 sub _tkt_assigned_person { $_[1]{'dv_assigned_to'}       || '(none)'    }
+sub _tkt_caller_id       { $_[1]{'dv_caller_id'} || $_[1]{'caller_id'} || '' }
 sub _tkt_date_resolved   { $_[1]{'dv_resolved_at'}       || ''          }
 sub _tkt_date_submit     { $_[1]{'dv_opened_at'}         || ''          }
 sub _tkt_date_update     { $_[1]{'dv_sys_updated_on'}    || ''          }
 sub _tkt_description     { $_[1]{'description'}          || ''          }
 sub _tkt_number          { $_[1]{'number'}               || '(none)'    }
+sub _tkt_opened_by       { $_[1]{'dv_opened_by'}         || '(unknown)' }
 sub _tkt_priority        { $_[1]{'dv_priority'}          || '(unknown)' }
 sub _tkt_requestor       { $_[1]{'dv_sys_created_by'}    || '(unknown)' }
 sub _tkt_resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }

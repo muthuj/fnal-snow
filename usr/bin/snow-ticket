@@ -61,6 +61,7 @@ sub debug { if ($DEBUG) { warn "@_\n" } }
 ### main () ##################################################################
 ##############################################################################
 
+
 my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
     'd|debug'    => \$DEBUG,
@@ -74,14 +75,13 @@ my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
 my $CONFIG = $SNOW->config_hash;
 
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
-$SNOW->connect or die "could not connect to SN\n";
+$SNOW->connect or die "could not connect to SNOW\n";
 
 pod2usage ("invalid type: $TYPE")
     unless $TYPE =~ /^(base|debug|worklog)$/i;
 
 pod2usage ("no tickets requested") unless scalar @ARGV;
 foreach my $tktnum (@ARGV) {
-
     debug "Looking up ticket '$tktnum'";
     my @ticket = $SNOW->tkt_by_number ($tktnum);
     unless (@ticket) {

@@ -24,6 +24,7 @@ our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
 our $TYPE = 'incident';
+our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
 
 use vars qw/$USER $GROUP $SUBJECT $TICKET_FILE/;
 
@@ -105,6 +106,15 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
+debug "Looking up user '$USER'";
+my $u = $SNOW->user_by_username ($USER);
+unless ($u) { die "invalid user: $USER\n" }
+my $uid = $u->{'sys_id'};
+set_ticket ($TICKET, 'caller_id', $uid);
+
+use Data::Dumper; print Dumper($TICKET);
+use Data::Dumper; print Dumper($u);
+
 debug ("creating a new entry in Service Now");
 my $tktnum = $SNOW->tkt_create ($TYPE, %{$TICKET->{ticket}});
 die "unable to create ticket\n" unless $tktnum;
@@ -117,9 +127,8 @@ unless (scalar @tkt == 1) {
 }
 my $tkt = $tkt[0];
 
-debug sprintf ("Assigning tkt to %s/%s",
-    $GROUP || '*none*', $USER || '*none*');
-my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP, $USER);
+debug sprintf ("Assigning tkt to %s", $GROUP || '*none*');
+my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP);
 
 my $return = 0;
 if (scalar @return > 1) {

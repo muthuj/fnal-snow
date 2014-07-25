@@ -30,6 +30,8 @@ Note that if you want to clear the assignment field, you can set I<--user ''>.
 ### Configuration ############################################################
 ##############################################################################
 
+use lib '/home/tskirvin/rpm/fnal-snow/lib';
+
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
@@ -84,13 +86,28 @@ unless (defined $USER or defined $GROUP) {
 my ($tktnum, @rest) = @ARGV;
 error_usage ("no tkt listed" ) unless ($tktnum);
 
-
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
 my $CONFIG = $SNOW->config_hash;
 
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
+
+my $uid = '';
+if ($USER) {
+    debug "Looking up user '$USER'";
+    my $u = $SNOW->user_by_username ($USER);
+    unless ($u) { die "invalid user: $USER\n" }
+    $uid = $u->{'sys_id'};
+}
+
+my $gid = '';
+if ($GROUP) {
+    debug "Looking up group '$GROUP'";
+    my $g = $SNOW->group_by_groupname ($GROUP);
+    unless ($g) { die "invalid group: $GROUP\n" }
+    $gid = $g->{'sys_id'};
+}
 
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
@@ -100,9 +117,18 @@ unless (scalar @tkt == 1) {
 }
 my $tkt = $tkt[0];
 
+$GROUP ||= $tkt->{'dv_assignment_group'};
+unless ($GROUP) { die "ticket is not in a group, no --group passed in\n" }
+
+if ($USER) {
+    debug ("confirming that user '$USER' is in group '$GROUP'");
+    die "user '$USER' is not in group '$GROUP'\n" 
+        unless $SNOW->user_in_group ($USER, $GROUP);
+}
+
 debug sprintf ("Assigning tkt to %s/%s",
     $GROUP || '*none*', $USER || '*none*');
-my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP, $USER);
+my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP, $uid);
 
 my $return = 0;
 if (scalar @return > 1) {

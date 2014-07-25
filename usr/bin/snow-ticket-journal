@@ -83,6 +83,11 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
+debug "Looking up user '$USER'";
+my $u = $SNOW->user_by_username ($USER);
+unless ($u) { die "invalid user: $USER\n" }
+my $uid = $u->{'sys_id'};
+
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
 unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
@@ -94,7 +99,7 @@ my $inc = $tkt[0];
 debug "Adding journal entry";
 
 my @return = $SNOW->tkt_update ($$inc{'number'},
-    $TYPE => "$USER: $text", 'type' => $TYPE);
+    $TYPE => "$USER: $text", 'type' => $TYPE, 'user' => $USER);
 
 my $return = 0;
 if (scalar @return > 1) {

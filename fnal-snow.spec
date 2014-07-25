@@ -1,7 +1,7 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
 Version:        0
-Release:        3%{?dist}
+Release:        4%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
@@ -54,6 +54,14 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Fri Jul 25 2014   Tim Skirvin <tskirvin@fnal.gov>   0-4
+- snow-ticket-create now exists
+- snow-ticket-list and snow-ticket now do a better job with requester
+  information
+- snow-ticket-list reports on usernames with uids
+- snow-ticket-assign confirms user/group memberships before assignments
+- FNAL::SNOW user/group scripts are now just more useful.
+
 * Wed Jul 23 2014   Tim Skirvin <tskirvin@fnal.gov>   0-3
 - adding create() and tkt_create() functions
 - general code cleanup
