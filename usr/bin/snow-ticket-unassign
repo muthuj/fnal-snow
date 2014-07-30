@@ -2,18 +2,19 @@
 
 =head1 NAME
 
-snow-ticket-journal - adds a journal entry for a Service Now ticket
+snow-ticket-unassign - assign a Service Now ticket to the Service Desk
 
 =head1 SYNOPSIS
 
-B<snow-ticket-journal> F<TICKET_NUMBER> F<TEXT>
+B<snow-ticket-unassign> F<INCIDENT_NUMBER>
 
-B<snow-ticket-journal> --man
+B<snow-ticket-unassign> --man
 
 =head1 DESCRIPTION
 
-snow-ticket-journal adds new journal entries for a specified ticket number.
-The updated ticket information is then printed to STDOUT.
+snow-ticket-unassign sets the B<assignment_group> of a ticket back to 'Service
+Desk', and sets the B<dv_u_request_reassignment> field as well.  The updated
+Incident information is then printed to STDOUT.
 
 =cut
 
@@ -24,9 +25,7 @@ The updated ticket information is then printed to STDOUT.
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
-our $TYPE  = 'work_notes';
-our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
-our $STDIN = 0;
+our $GROUP = 'Service Desk';
 
 ##############################################################################
 ### Declarations #############################################################
@@ -64,21 +63,12 @@ my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
     'd|debug'    => \$DEBUG,
     'c|config=s' => \$CONFIG_FILE,
-    'u|user=s'   => \$USER,
-    't|type=s'   => \$TYPE,
-    'stdin'      => \$STDIN,
+    'g|group=s'  => \$GROUP,
     'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-error_usage ("invalid type: $TYPE") unless $TYPE =~ /^(work_notes|comment)$/;
-
 my ($tktnum, @rest) = @ARGV;
-error_usage ("no tkt listed") unless ($tktnum);
-
-my $text = join (' ', @rest);
-if ($STDIN) { $text = join ("\n", $text, <STDIN>) }
-
-error_usage ('no text provided') if $text eq '';
+error_usage ("no tkt listed" ) unless ($tktnum);
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -87,23 +77,20 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up user '$USER'";
-my $u = $SNOW->user_by_username ($USER);
-unless ($u) { die "invalid user: $USER\n" }
-my $uid = $u->{'sys_id'};
-
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
-unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
+unless (@tkt) { die "unable to load tkt: '$tktnum'\n"; }
 unless (scalar @tkt == 1) {
-    die "too many matches for ticket '$tktnum'\n";
+    die "too many matches for tkt '$tktnum'\n";
 }
-my $inc = $tkt[0];
+my $tkt = $tkt[0];
 
-debug "Adding journal entry";
-
-my @return = $SNOW->tkt_update ($$inc{'number'},
-    $TYPE => "$USER: $text", 'type' => $TYPE, 'user' => $USER);
+debug ("Assigning tkt to $GROUP");
+my @return = $SNOW->tkt_update ($$tkt{'number'}, 
+    'assignment_group'          => $GROUP,
+    'assign_to'                 => 0,
+    'dv_u_request_reassignment' => 1
+);
 
 my $return = 0;
 if (scalar @return > 1) {
@@ -115,11 +102,11 @@ if (scalar @return > 1) {
 }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number ($tktnum));
+    if (ref $ret && $ret->{number} eq $tkt->{number}) {
+        print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number($tktnum));
     } elsif (ref $ret) {
         print "returned object did not match our original tkt number";
-        print scalar $SNOW->tkt_string_base ($ret);
+        print scalar $SNOW->tkt_string_short ($ret);
         $return = 1;
     } else {
         print "error: $ret\n";
@@ -137,27 +124,17 @@ exit $return;
 
 =over 4
 
-=item I<TICKET_NUMBER>
+=item I<INCIDENT_NUMBER>
 
-ID of a ticket number to update.
-
-=item I<TEXT>
-
-Text to enter into the journal entry.
-
-=item B<--config> I<CONFIG>
+ID of a ticket number to update.  You can leave off the F<INC0+> values.
 
 =item B<--debug>
 
 Print debugging information on STDERR.
 
-=item B<--user> I<USER>
+=item B<--group> I<GROUP>
 
-The user listed in the submitted text; defaults to $ENV{'USER'} or the running uid.
-
-=item B<--stdin>
-
-If set, take additional text for the journal entry on STDIN.
+Assign the ticket to group I<GROUP>.  Defaults to I<Service Desk>.
 
 =item B<--help>
 
@@ -172,10 +149,6 @@ Prints out the full help documentation and exits.
 =head1 REQUIREMENTS
 
 B<FNAL::SNOW>
-
-=head1 EXAMPLES
-
-    snow-ticket-journal INC389936 "testing"
 
 =head1 AUTHOR
 

@@ -1,7 +1,7 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
 Version:        0
-Release:        4%{?dist}
+Release:        5%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
@@ -54,6 +54,11 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Wed Jul 30 2014   Tim Skirvin <tskirvin@fnal.gov>   0-5
+- snow-ticket-unassign - new script
+- snow-ticket-journal - added '--stdin' for getting text
+- snow-ticket-resolve - added '--stdin' for getting text
+
 * Fri Jul 25 2014   Tim Skirvin <tskirvin@fnal.gov>   0-4
 - snow-ticket-create now exists
 - snow-ticket-list and snow-ticket now do a better job with requester

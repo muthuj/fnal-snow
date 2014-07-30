@@ -30,8 +30,6 @@ Note that if you want to clear the assignment field, you can set I<--user ''>.
 ### Configuration ############################################################
 ##############################################################################
 
-use lib '/home/tskirvin/rpm/fnal-snow/lib';
-
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;

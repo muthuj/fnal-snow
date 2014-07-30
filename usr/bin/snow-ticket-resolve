@@ -27,6 +27,7 @@ our $CONFIG_FILE = '/etc/snow/config.yaml';
 our $DEBUG = 0;
 our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
 our $CODE  = 'Other (must describe below)';
+our $STDIN = 0;
 
 ##############################################################################
 ### Declarations #############################################################
@@ -66,6 +67,7 @@ my $result = $parser->getoptions (
     'c|config=s' => \$CONFIG_FILE,
     'u|user=s'   => \$USER,
     'code=s'     => \$CODE,
+    'stdin'      => \$STDIN,
     'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
@@ -73,6 +75,8 @@ my ($tktnum, @rest) = @ARGV;
 error_usage ("no tkt listed") unless ($tktnum);
 
 my $text = join (' ', @rest);
+if ($STDIN) { $text = join ("\n", $text, <STDIN>) }
+
 error_usage ('no text provided') if $text eq '';
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
@@ -146,6 +150,10 @@ Text to enter into the journal entry.
 =item B<--debug>
 
 Print debugging information on STDERR.
+
+=item B<--stdin>
+
+If set, take additional text for the journal entry from STDIN.
 
 =item B<--user> I<USER>
 
