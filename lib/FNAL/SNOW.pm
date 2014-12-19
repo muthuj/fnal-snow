@@ -794,7 +794,9 @@ sub tkt_summary {
         my $request     = $createdby->{'dv_user_name'} || '*unknown*';
         my $assign      = $assignedto->{'dv_user_name'} || '*unassigned*';
         my $group       = $self->_tkt_assigned_group ($tkt);
-        my $status      = $self->_tkt_status ($tkt) || $self->_tkt_stage($tkt);
+        my $status      = $self->_tkt_status ($tkt) 
+                            || $self->_tkt_itil_state ($tkt) 
+                            || $self->_tkt_stage ($tkt);
         my $created     = $self->_format_date ($self->_tkt_date_submit ($tkt));
         my $updated     = $self->_format_date ($self->_tkt_date_update ($tkt));
         my $description = $self->_tkt_summary ($tkt);
@@ -1081,6 +1083,7 @@ sub _tkt_date_resolved   { $_[1]{'dv_resolved_at'}       || ''          }
 sub _tkt_date_submit     { $_[1]{'dv_opened_at'}         || ''          }
 sub _tkt_date_update     { $_[1]{'dv_sys_updated_on'}    || ''          }
 sub _tkt_description     { $_[1]{'description'}          || ''          }
+sub _tkt_itil_state      { $_[1]{'u_itil_state'}         || ''          }
 sub _tkt_number          { $_[1]{'number'}               || '(none)'    }
 sub _tkt_opened_by       { $_[1]{'dv_opened_by'}         || '(unknown)' }
 sub _tkt_priority        { $_[1]{'dv_priority'}          || '(unknown)' }
