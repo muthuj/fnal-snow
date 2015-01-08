@@ -60,7 +60,7 @@ Some useful queries:
     snow-ticket-list --query assign
     snow-ticket-list --query group  --user `whoami`
     snow-ticket-list --query submit --user `whoami` --subquery closed
-    snow-ticket-list --query unassigned --group CMS-CIS
+    snow-ticket-list --query unassigned --group ECF-CIS
     snow-ticket-list --query unresolved --group all --user tskirvin
 
 ### snow-ticket

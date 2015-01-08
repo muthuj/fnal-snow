@@ -246,7 +246,7 @@ B<FNAL::SNOW>
     snow-ticket-list --query assign
     snow-ticket-list --query group  --user tskirvin
     snow-ticket-list --query submit --user tskirvin --subquery closed
-    snow-ticket-list --query unassigned --group CMS-CIS
+    snow-ticket-list --query unassigned --group ECF-CIS
     snow-ticket-list --query unresolved --group all --user tskirvin
 
 =head1 AUTHOR

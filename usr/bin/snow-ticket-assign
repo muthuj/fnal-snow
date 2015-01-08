@@ -194,8 +194,8 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-    snow-ticket-assign INC389936 --group CMS-CIS
-    snow-ticket-assign INC389936 --group CMS-CIS --user tskirvin
+    snow-ticket-assign INC389936 --group ECF-CIS
+    snow-ticket-assign INC389936 --group ECF-CIS --user tskirvin
 
 =head1 AUTHOR
 

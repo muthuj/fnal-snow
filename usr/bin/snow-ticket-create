@@ -185,8 +185,8 @@ The default ticket fields come from a local YAML file, which looks something
 like this:
 
     ticket:
-        assignment_group:       'CMS-CIS'
-        group:                  'CMS-CIS'
+        assignment_group:       'ECF-CIS'
+        group:                  'ECF-CIS'
         impact:                 '4'
         short_description:      '(no subject)'
         u_categorization:       'Hardware -- Server -- Linux'
@@ -237,7 +237,7 @@ B<FNAL::SNOW>
 =head1 EXAMPLE
 
     echo "testing" | snow-ticket-create --ticket template.yaml \
-        --subject testing --group CMS-CIS
+        --subject testing --group ECF-CIS
 
 =head1 AUTHOR
 
