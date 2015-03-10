@@ -1,7 +1,7 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
-Version:        0
-Release:        6%{?dist}
+Version:        1.0.1
+Release:        0%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
@@ -54,6 +54,10 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Tue Mar 10 2015   Tim Skirvin <tskirvin@fnal.gov.   1.0.1-0
+- snow-ticket-create - removing some old debugging output
+- changing to 'x.y.z' versioning
+
 * Fri Dec 19 2014   Tim Skirvin <tskirvin@fnal.gov>   0-6
 - snow-to-nagios - service tickets are no longer auto-closed
 

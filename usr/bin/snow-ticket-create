@@ -112,9 +112,6 @@ unless ($u) { die "invalid user: $USER\n" }
 my $uid = $u->{'sys_id'};
 set_ticket ($TICKET, 'caller_id', $uid);
 
-use Data::Dumper; print Dumper($TICKET);
-use Data::Dumper; print Dumper($u);
-
 debug ("creating a new entry in Service Now");
 my $tktnum = $SNOW->tkt_create ($TYPE, %{$TICKET->{ticket}});
 die "unable to create ticket\n" unless $tktnum;
