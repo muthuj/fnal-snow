@@ -1,0 +1,16 @@
+## Default fields that will be created in a new ticket created with this 
+## package.  The programs should let you override necessary fields from
+## the command line.
+ticket:
+    assignment_group:       'ECF-CIS'
+    group:                  'ECF-CIS'
+    impact:                 '4'
+    short_description:      '(no subject)'
+    u_categorization:       'Hardware -- Server -- Linux'
+    u_item:                 'Linux'
+    u_operational_category: 'Break/Fix'
+    u_page_primary:         '0'
+    u_reported_source:      'Event Monitoring'
+    urgency:                '4'
+    u_service:              'Scientific Services'
+    u_service_type:         'Server'

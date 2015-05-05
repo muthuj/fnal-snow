@@ -1,42 +1,36 @@
-new-ticket:
-	@echo "Testing" | ../usr/sbin/nagios-to-snow --type testing \
-		--ciname testing --subject testing --serviceproblemid testing
+INCIDENT?= 'INC520944'
 
-host: problem-host recovery-host
+ticket-new:
+	@echo "Testing" | ../usr/bin/snow-ticket-create --subject testing \
+		--group ECF-CIS --ticket new-cis-ticket.yaml
 
-problem-host:
-	@echo "(sample)" | ../usr/sbin/nagios-to-snow --type PROBLEM \
-		--ciname testing --state DOWN \
-		--subject "fake alert: problem with fake host testing" \
-		--debug
+ticket-list:
+	@ ../usr/bin/snow-ticket-list -g ECF-CIS
 
-ack-host:
-	echo "(sample)" | ../usr/sbin/nagios-to-snow --type ACKNOWLEDGEMENT \
-		--ciname testing --state DOWN \
-		--subject "fake alert: problem with fake host testing" \
-		--debug
+ticket:
+	@ ../usr/bin/snow-ticket $(INCIDENT)
 
-recovery-host:
-	@echo "(sample)" | ../usr/sbin/nagios-to-snow --type RECOVERY \
-		--ciname testing --state UP \
-		--subject "fake alert: problem with fake host testing" \
-		--debug
+ticket-journal:
+	@ ../usr/bin/snow-ticket-journal $(INCIDENT) 'testing again'
 
-problem-service:
-	@echo "(sample)" | ../usr/sbin/nagios-to-snow --type PROBLEM \
-		--ciname testing --servicename test_svc \
-		--subject "fake alert: problem with fake service testing" \
-		--debug
+ticket-assign:
+	@ ../usr/bin/snow-ticket-assign $(INCIDENT) -u tskirvin -g ECF-CIS
 
-ack-service:
-	@echo "(sample)" | ../usr/sbin/nagios-to-snow --type ACKNOWLEDGEMENT \
-		--ciname testing --servicename test_svc \
-		--subject "fake alert: problem with fake service testing" \
-		--ackauthor=`whoami` --ackcomment="testing" \
-		--debug 
+ticket-unassign:
+	@ ../usr/bin/snow-ticket-unassign $(INCIDENT)
 
-recovery-service:
-	@echo "(sample)" | ../usr/sbin/nagios-to-snow --type RECOVERY \
-		--ciname testing --servicename test_svc \
-		--subject "fake alert: problem with fake service testing" \
-		--debug 
+ticket-resolve:
+	@ ../usr/bin/snow-ticket-resolve $(INCIDENT) 'testing'
+
+ticket-reopen:
+	@ ../usr/bin/snow-ticket-reopen $(INCIDENT)
+
+ticket-all: ticket-new ticket-list ticket ticket-journal ticket-assign ticket-unassign ticket-resolve ticket-reopen
+
+
+ritm-new:
+	@echo "Testing" | ../usr/bin/snow-ticket-create --subject testing \
+		--type ritm --group ECF-CIS --ticket new-cis-ritm.yaml --debug
+
+ritm-list:
+	@ ../usr/bin/snow-ticket-list --group ECF-CIS --type ritm
