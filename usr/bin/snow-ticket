@@ -12,11 +12,11 @@ B<snow-ticket> --man
 
 =head1 DESCRIPTION
 
-snow-ticket prints useful information to STDOUT about a Service Now 'ticket'
-type (defined here as an Incident, Request, Requested Item, or Task).
-Specifically, we query the SN database for a given number (or list
-of numbers), and for each one we create a human-readable report containing
-relevant information (selected at the module level).
+snow-ticket prints useful information to STDOUT about a Service Now ticket
+(defined here as an Incident, Request, Requested Item, or Task).  Specifically,
+we query the SNOW database for a given number (or list of numbers), and for
+each one we create a human-readable report containing relevant information
+(selected at the module level).
 
 =cut
 
@@ -78,7 +78,7 @@ debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SNOW\n";
 
 pod2usage ("invalid type: $TYPE")
-    unless $TYPE =~ /^(base|debug|worklog)$/i;
+    unless $TYPE =~ /^(base|debug|journal|short)$/i;
 
 pod2usage ("no tickets requested") unless scalar @ARGV;
 foreach my $tktnum (@ARGV) {
@@ -89,14 +89,19 @@ foreach my $tktnum (@ARGV) {
         next;
     }
 
-    if    (lc $TYPE eq 'base') {
-        print scalar $SNOW->tkt_string_base (@ticket);
-    }
-    elsif (lc $TYPE eq 'debug') {
-        print scalar $SNOW->tkt_string_debug (@ticket);
-    }
-    elsif (lc $TYPE eq 'worklog') {
-        print scalar $SNOW->tkt_string_worklog (@ticket);
+    foreach (@ticket) {
+        if    (lc $TYPE eq 'base') {
+            print scalar $SNOW->tkt_string_base ($_);
+        }
+        elsif (lc $TYPE eq 'debug') {
+            print scalar $SNOW->tkt_string_debug ($_);
+        }
+        elsif (lc $TYPE eq 'journal') {
+            print scalar $SNOW->tkt_string_journal ($_);
+        }
+        elsif (lc $TYPE eq 'short') {
+            print scalar $SNOW->tkt_string_short ($_);
+        }
     }
 }
 
@@ -177,9 +182,13 @@ information.  Results look something like this:
     business_duration                  1970-01-01 01:51:01
     [...]
 
-=item B<--type> F<worklog>
+=item B<--type> F<journal>
 
-Just returns the 'Worklog Entries' information, as above.
+Like the standard output, but only printing Journal entries.
+
+=item B<--type> F<short>
+
+Like the standard output, but skipping Journal entries.
 
 =back
 

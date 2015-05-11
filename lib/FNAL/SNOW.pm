@@ -21,11 +21,26 @@ FNAL::SNOW provides an interface to the Service Now service run at the Fermi
 National Accelerator Laboratory.  It is primarily useful for loading and
 manipulating help desk objects (e.g. Incidents).
 
+Behind the scenes, this module wraps the main ServiceNow perl libraries and the
+B<FNAL::SNOW::Ticket::*> suite of modules and provides context for a number of
+user scripts and automation.
+
 =cut
 
 ##############################################################################
 ### Configuration ############################################################
 ##############################################################################
+
+## What kinds of incidents do we support?  Each of these corresponds to a
+## specific puppet module.  It's okay to load the same module multiple times
+## under different names for user convenience.
+
+our %TICKET_TYPES = (
+    'incident'    => 'FNAL::SNOW::Ticket::Incident',
+    'sc_req_item' => 'FNAL::SNOW::Ticket::RITM',
+    'ritm'        => 'FNAL::SNOW::Ticket::RITM',
+    'ticket'      => 'FNAL::SNOW::Ticket::Incident',
+);
 
 ##############################################################################
 ### Declarations #############################################################
@@ -36,14 +51,20 @@ use warnings;
 
 use Class::Struct;
 use Data::Dumper;
-use Date::Manip;
 use FNAL::SNOW::Config;
 use MIME::Lite;
-use POSIX qw/strftime/;
 use ServiceNow;
 use ServiceNow::Configuration;
-use Text::Wrap;
 
+## Load the classes from %TICKET_TYPES, above.
+foreach my $tkt (sort keys %TICKET_TYPES) {
+    my $class = $TICKET_TYPES{$tkt};
+    eval "require $class";
+    if ( $@ ) { die $@ }
+}
+
+## Primary and simple data structure, this should be fairly straightforward
+## compared to normal perl modules.
 struct 'FNAL::SNOW' => {
     'config'      => '$',
     'config_file' => '$',
@@ -52,6 +73,15 @@ struct 'FNAL::SNOW' => {
     'snconf'      => '$',
 };
 
+## When we do queries, we want to store what table we were searching as well as
+## the results.
+struct 'FNAL::SNOW::QueryResult' => {
+    'result' => '$',
+    'table'  => '$'
+};
+
+## Cache user and group data, because it gets repeated a lot and SNOW isn't
+## really that fast.
 use vars qw/%GROUPCACHE %USERCACHE %NAMECACHE/;
 
 ##############################################################################
@@ -62,13 +92,14 @@ use vars qw/%GROUPCACHE %USERCACHE %NAMECACHE/;
 
 =head2 Initializion
 
-These functions are used for creating the underlying objects.
+FNAL::SNOW is a B<Config::Struct> object under the covers.  These functions
+supplement the basic getter/setter functionality.
 
 =over 4
 
 =item config_hash ()
 
-Returns the configuration data as a hash.
+Returns the configuration data as a hash.  See B<FNAL::SNOW::Config>.
 
 =cut
 
@@ -76,7 +107,7 @@ sub config_hash { return shift->config->config }
 
 =item connect ()
 
-Connects to Service Now given the information in the FNAL::SNOW::Config: $
+Connects to Service Now given the information in the B<FNAL::SNOW::Config>;
 associated with 'servicenow'.
 
 =cut
@@ -140,15 +171,16 @@ sub load_yaml {
 
 =head2 Database Subroutines
 
-These subroutines perform direct database queries, using B<ServiceNow::GlideRecord>.
+These subroutines perform direct database queries, using
+B<ServiceNow::GlideRecord>.
 
 =over 4
 
 =item create (TABLE, PARAMS)
 
-Inserts a new item into the Service Now database in table I<TABLE> and based
-on the parameters in the hashref I<PARAMS>.  Returns the matching items (as
-pulled from another query based on the returned sys_id).
+Inserts a new item into the Service Now database in table I<TABLE> and based on
+the parameters in the hashref I<PARAMS>.  Returns the matching items (as pulled
+from another query based on the returned sys_id).
 
 =cut
 
@@ -160,17 +192,13 @@ sub create {
     return $self->query ($table, {'sys_id' => $id} )
 }
 
-sub insert { create (@_) }
-
 =item query (TABLE, PARAMS)
 
 Queries the Service Now database, looking specifically at table I<TABLE> with
 parameters stored in the hashref I<PARAMS>.  Returns an array of matching
-entries.
+B<FNAL::SNOW::QueryResult> objects.
 
 =cut
-
-sub read { query(@_) }
 
 sub query {
     my ($self, $table, $params) = @_;
@@ -180,7 +208,9 @@ sub query {
     my @return;
     while ($glide->next()) {
         my %record = $glide->getRecord();
-        push @return, \%record;
+        my $obj = FNAL::SNOW::QueryResult->new (
+            'table' => $table, 'result' => \%record );
+        push @return, $obj;
     }
     return @return;
 }
@@ -213,6 +243,8 @@ sub update {
 
 =back
 
+Note: there is no B<delete()>.
+
 =cut
 
 ##############################################################################
@@ -241,10 +273,8 @@ sub tkt_assign {
     if ($group)        { $update{'assignment_group'} = $group }
     if (defined $user) { $update{'assigned_to'}    = $user || 0 }
 
-    return $self->tkt_update ($number, %update);
+    return $self->update ($number, %update);
 }
-
-sub incident_assign { shift->tkt_assign ('Incident', @_) }
 
 =item tkt_list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
 
@@ -263,8 +293,6 @@ sub tkt_list_by_type {
     my @entries = $self->query($type, $search);
     return @entries;
 }
-
-sub incident_list { shift->tkt_list_by_type ('Incident', @_) }
 
 =item tkt_list_by_assignee (I<TYPE>, I<EXTRA>)
 
@@ -315,10 +343,10 @@ sub parse_ticket_number {
 
 =head2 Ticket List Text Functions
 
-These functions generate an array of ticket objects, and pass them through
-B<tkt_list()> to generate human-readable reports.  Each of them either returns
-an array of lines suitable for printing, or (in a scalar syntax) a single
-string with built-in newlines.
+These functions generate an array of ticket objects, and pass them through the
+per-ticket-type B<list()> function to generate human-readable reports.  Each of
+them either returns an array of lines suitable for printing, or (in a scalar
+syntax) a single string with built-in newlines.
 
 =over 4
 
@@ -331,16 +359,16 @@ based on 'open', 'closed', or 'unresolved' tickets.
 
 sub text_tktlist_assignee {
     my ($self, $type, $user, $subtype) = @_;
-    my $t = $self->_tkt_type ($type);
-    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
-    $text = "== $text assigned to user '$user'";
+    my $class = $TICKET_TYPES{$type} || return "invalid type: $type";
 
-    return $self->tkt_list ($text,
-        $self->tkt_list_by_assignee ($t, $user, $extra)
+    my ($extra, $text) = $class->build_filter ('subtype' => $subtype);
+    my $obj = $class->new ('connection' => $self);
+
+    $text = "== $text assigned to user '$user'";
+    return $obj->list ($text,
+        $self->tkt_list_by_assignee ($class->type, $user, $extra)
     );
 }
-
-sub text_inclist_assignee { shift->text_tktlist_assignee ('Incident', @_); }
 
 =item text_tktlist_group (TYPE, GROUP, SUBTYPE)
 
@@ -351,15 +379,18 @@ based on 'open', 'closed', or 'unresolved' tickets.
 
 sub text_tktlist_group {
     my ($self, $type, $group, $subtype) = @_;
-    my $t = $self->_tkt_type ($type);
-    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
+    my $class = $TICKET_TYPES{$type} || return "invalid type: $type";
+
+    my ($extra, $text) = $class->build_filter ('subtype' => $subtype);
+    my $obj = $class->new ('connection' => $self);
+
     $text = "== $text assigned to group '$group'";
-    return $self->tkt_list ( $text,
-        $self->tkt_list_by_type ($t, { 'assignment_group' => $group }, $extra)
+    return $obj->list ( $text,
+        $self->tkt_list_by_type (
+            $class->type, { 'assignment_group' => $group }, $extra
+        )
     );
 }
-
-sub text_inclist_group { shift->text_tktlist_group ('Incident', @_); }
 
 =item text_tktlist_submit (TYPE, USER, SUBTYPE)
 
@@ -370,15 +401,18 @@ on 'open', 'closed', or 'unresolved' tickets.
 
 sub text_tktlist_submit {
     my ($self, $type, $user, $subtype) = @_;
-    my $t = $self->_tkt_type ($type);
-    my ($extra, $text) = _tkt_filter ($type, 'subtype' => $subtype);
+    my $class = $TICKET_TYPES{$type} || return "invalid type: $type";
+
+    my ($extra, $text) = $class->build_filter ('subtype' => $subtype);
+    my $obj = $class->new ('connection' => $self);
+
     $text = "== $text submitted by user '$user'";
-    return $self->tkt_list ( $text,
-        $self->tkt_list_by_type ($t, { 'sys_created_by' => $user }, $extra)
+    return $obj->list ( $text,
+        $self->tkt_list_by_type (
+            $class->type, { 'sys_created_by' => $user }, $extra
+        )
     );
 }
-
-sub text_inclist_submit { shift->text_tktlist_group ('Incident', @_) }
 
 =item text_tktlist_unassigned (TYPE, GROUP)
 
@@ -388,16 +422,20 @@ List unresolved, unassigned tickets assigned to group I<GROUP>.
 
 sub text_tktlist_unassigned {
     my ($self, $type, $group) = @_;
-    my $t = $self->_tkt_type ($type);
-    my ($extra, $text) = _tkt_filter ($type,
-        'unassigned' => 1, 'subtype' => 'unresolved');
+    my $class = $TICKET_TYPES{$type} || return "invalid type: $type";
+
+    my ($extra, $text) = $class->build_filter (
+        'unassigned' => 1, 'subtype' => 'unresolved'
+    );
+    my $obj = $class->new ('connection' => $self);
+
     $text = "== $group: $text";
-    return $self->tkt_list ( $text,
-        $self->tkt_list_by_type($t, { 'assignment_group' => $group }, $extra)
+    return $obj->list ( $text,
+        $self->tkt_list_by_type(
+            $class->type, { 'assignment_group' => $group }, $extra
+        )
     );
 }
-
-sub text_inclist_unassigned { shift->text_tktlist_unassigned ('Incident', @_) }
 
 =item text_tktlist_unresolved (TYPE, GROUP, TIMESTAMP)
 
@@ -408,16 +446,20 @@ the timestamp I<TIMESTAMP>.
 
 sub text_tktlist_unresolved {
     my ($self, $type, $group, $timestamp) = @_;
-    my $t = $self->_tkt_type ($type);
-    my ($extra, $text) = _tkt_filter ($type,
-        'submit_before' => $timestamp, 'subtype' => 'unresolved');
+    my $class = $TICKET_TYPES{$type} || return "invalid type: $type";
+
+    my ($extra, $text) = $class->build_filter (
+        'submit_before' => $timestamp, 'subtype' => 'unresolved'
+    );
+    my $obj = $class->new ('connection' => $self);
+
     $text = "== $group: $text";
-    return $self->tkt_list ( $text,
-        $self->tkt_list_by_type ($t, { 'assignment_group' => $group }, $extra)
+    return $obj->list ( $text,
+        $self->tkt_list_by_type (
+            $class->type, { 'assignment_group' => $group }, $extra
+        )
     );
 }
-
-sub text_inclist_unresolved { shift->text_tktlist_unresolved ('Incident', @_) }
 
 =back
 
@@ -437,15 +479,17 @@ These should ideally work against incidents, tasks, requests, etc.
 
 Queries for the ticket I<NUMBER> (after passing that field through
 B<parse_ticket_number()> for consistency and to figure out what kind of ticket
-we're looking at).  Returns an array of matching entries.
+we're looking at).  Returns an array of matching FNAL::SNOW::QueryResult
+entries.
 
 =cut
 
 sub tkt_by_number {
     my ($self, $number) = @_;
-    my $num = $self->parse_ticket_number ($number);
-    my $type = $self->_tkt_type_by_number ($num);
-    return $self->tkt_search ($type, { 'number' => $num });
+    my $num = $self->parse_ticket_number ($number) || return;
+    my $type = $self->_tkt_type_by_number ($num) || return;
+    my $obj = $type->new ('connection' => $self);
+    return $obj->search ({ 'number' => $num });
 }
 
 =item tkt_create (
@@ -472,8 +516,8 @@ sub tkt_is_resolved { return _tkt_state (@_) >= 4 ? 1 : 0 }
 
 =item tkt_reopen
 
-Update the ticket to set the incident_state back to 'Work In Progress', 
-and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>, 
+Update the ticket to set the incident_state back to 'Work In Progress',
+and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>,
 and I<resolved_by>.
 
 Uses B<tkt_update()>.
@@ -494,7 +538,7 @@ sub tkt_reopen {
 
 =item tkt_resolve ( CODE, ARGUMENT_HASH )
 
-Updates the ticket to status 'resolved', as well as the following fields 
+Updates the ticket to status 'resolved', as well as the following fields
 based on I<ARGUMENT_HASH>:
 
    close_code       The resolution code (which can be anything, but FNAL has
@@ -549,31 +593,12 @@ sub tkt_update {
 =cut
 
 ##############################################################################
-### Generic Ticket Reporting #################################################
+### Text-Based Ticket Reporting ##############################################
 ##############################################################################
 
-=head2 Generic Ticket Reporting
-
-These should ideally work against incidents, tasks, requests, etc.
+=head2 Text-Based Ticket Reporting
 
 =over 4
-
-=item tkt_list (TEXT, TICKETLIST)
-
-Given a list of ticket objects, sorts them by number, pushes them all 
-through B<tkt_summary()>, and combines the text into a single object.
-
-=cut
-
-sub tkt_list {
-    my ($self, $text, @list) = @_;
-    my @return;
-    push @return, $text, '';
-    foreach (sort { $a->{'number'} cmp $b->{'number'} } @list) {
-        push @return, ($self->tkt_summary ($_), '') 
-    }
-    wantarray ? @return : join ("\n", @return, '');
-}
 
 =item tkt_string_assignee (TKT)
 
@@ -583,16 +608,10 @@ Generates a report of the assignee information.
 
 sub tkt_string_assignee {
     my ($self, $tkt) = @_;
-    my @return = "Assignee Info";
-    push @return, $self->_format_text_field (
-        {'minwidth' => 20, 'prefix' => '  '},
-        'Group'         => $self->_tkt_assigned_group ($tkt),
-        'Name'          => $self->_tkt_assigned_person ($tkt),
-        'Last Modified' => $self->_format_date ($self->_tkt_date_update($tkt))
-    );
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_assignee ($result)
 }
-
 
 =item tkt_string_base (TICKET)
 
@@ -603,20 +622,9 @@ description, journal (if present), and resolution status (if present).
 
 sub tkt_string_base {
     my ($self, $tkt) = @_;
-
-    my @return;
-    push @return,     $self->tkt_string_primary     ($tkt);
-    push @return, '', $self->tkt_string_requestor   ($tkt);
-    push @return, '', $self->tkt_string_assignee    ($tkt);
-    push @return, '', $self->tkt_string_description ($tkt);
-    if (my @journal = $self->tkt_string_journal ($tkt)) {
-        push @return, '', @journal;
-    }
-    if ($self->tkt_is_resolved ($tkt)) {
-        push @return, '', $self->tkt_string_resolution ($tkt);
-    }
-
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_base ($result);
 }
 
 =item tkt_string_debug (TICKET)
@@ -627,13 +635,9 @@ Generates a report showing the content of every field (empty or not).
 
 sub tkt_string_debug {
     my ($self, $tkt) = @_;
-    my @return;
-    push @return, "== " . $$tkt{'sys_id'};
-    foreach my $key (sort keys %$tkt) {
-        push @return, wrap('', ' ' x 41, sprintf ("  %-33s  %-s",
-            $key, $$tkt{$key} || '(empty)'));
-    }
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_debug ($result);
 }
 
 =item tkt_string_description (TICKET)
@@ -644,10 +648,9 @@ Generates a report showing the user-provided description.
 
 sub tkt_string_description {
     my ($self, $tkt) = @_;
-    my @return = "User-Provided Description";
-    push @return, $self->_format_text ({'prefix' => '  '},
-            $self->_tkt_description ($tkt));
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_description ($result);
 }
 
 =item tkt_string_journal (TICKET)
@@ -659,69 +662,9 @@ reverse order (blog style).
 
 sub tkt_string_journal {
     my ($self, $tkt) = @_;
-    my @return = "Journal Entries";
-    my @entries = $self->_journal_entries ($tkt);
-    if (scalar @entries < 1) { return '' }
-
-    my $count = scalar @entries;
-    foreach my $journal (reverse @entries) {
-        push @return, "  Entry " . $count--;
-        push @return, $self->_format_text_field (
-            {'minwidth' => 20, 'prefix' => '    '},
-            'Date'       => $self->_format_date(
-                                $self->_journal_date ($journal), 'GMT'),
-            'Created By' => $self->_journal_author ($journal),
-            'Type'       => $self->_journal_type   ($journal),
-        );
-        push @return, '', '    ' . $self->_journal_text ($journal), '';
-    }
-    return wantarray ? @return : join ("\n", @return, '');
-}
-
-
-=item tkt_string_primary (TICKET)
-
-Generates a report on the "primary" information for a ticket - number, text
-summary, status, submitted date, urgency, priority, and service type.
-
-=cut
-
-sub tkt_string_primary {
-    my ($self, $tkt) = @_;
-    my @return = "Primary Ticket Information";
-    push @return, $self->_format_text_field (
-        {'minwidth' => 20, 'prefix' => '  '},
-        'Number'        => $self->_tkt_number  ($tkt),
-        'Summary'       => $self->_tkt_summary ($tkt),
-        'Status'        => $self->_tkt_status  ($tkt),
-        'Submitted'     => $self->_format_date ($self->_tkt_date_submit($tkt)),
-        'Urgency'       => $self->_tkt_urgency ($tkt),
-        'Priority'      => $self->_tkt_priority ($tkt),
-        'Service Type'  => $self->_tkt_svctype ($tkt),
-    );
-    return wantarray ? @return : join ("\n", @return, '');
-}
-
-=item tkt_string_requestor (TICKET)
-
-Generates a report describing the requestor of the ticket.
-
-=cut
-
-sub tkt_string_requestor {
-    my ($self, $tkt) = @_;
-    my @return = "Requestor Info";
-
-    my $requestor = $self->user_by_username ($self->_tkt_requestor($tkt));
-    my $createdby = $self->user_by_name ($self->_tkt_caller_id($tkt));
-
-    push @return, $self->_format_text_field (
-        {'minwidth' => 20, 'prefix' => '  '},
-        'Name'       => $$createdby{'name'},
-        'Email'      => $$createdby{'email'},
-        'Created By' => $$requestor{'name'} || $self->_tkt_opened_by ($tkt),
-    );
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_journal ($result);
 }
 
 =item tkt_string_resolution (TICKET)
@@ -732,16 +675,9 @@ Generates a report showing the resolution status.
 
 sub tkt_string_resolution {
     my ($self, $tkt) = @_;
-    my @return = "Resolution";
-    push @return, $self->_format_text_field (
-        {'minwidth' => 20, 'prefix' => '  '},
-        'Resolved By' => $self->_tkt_resolved_by ($tkt),
-        'Date'        => $self->_format_date ($self->_tkt_date_resolved($tkt)),
-        'Close Code'  => $self->_tkt_resolved_code ($tkt)
-    );
-    push @return, '', $self->_format_text ({'prefix' => '  '},
-        $self->_tkt_resolved_text($tkt));
-    return wantarray ? @return : join ("\n", @return, '');
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_resolution ($result);
 }
 
 =item tkt_string_short (TICKET)
@@ -752,62 +688,9 @@ Like tkt_string_basic(), but dropping the worklog.
 
 sub tkt_string_short {
     my ($self, $tkt) = @_;
-
-    my @return;
-    push @return,     $self->tkt_string_primary     ($tkt);
-    push @return, '', $self->tkt_string_requestor   ($tkt);
-    push @return, '', $self->tkt_string_assignee    ($tkt);
-    push @return, '', $self->tkt_string_description ($tkt);
-    if ($self->tkt_is_resolved ($tkt)) {
-        push @return, '', $self->tkt_string_resolution ($tkt);
-    }
-
-    return wantarray ? @return : join ("\n", @return, '');
-}
-
-=item tkt_summary ( TICKET [, TICKET [, TICKET [...]]] )
-
-Generates a report showing a human-readable summary of a series of tickets,
-suitable for presenting in list form.
-
-=cut
-
-sub tkt_summary {
-    my ($self, @tickets) = @_;
-    my @return;
-
-    foreach my $tkt (@tickets) {
-        my $cid = $self->_tkt_caller_id ($tkt);
-        my $createdby  = $self->user_by_name ($cid);
-        unless ($createdby) { 
-            my $rid = $self->_tkt_requestor($tkt);
-            $createdby = $self->user_by_username ($rid) || {};
-        }
-
-        my $assignedto = {};
-        my $aid = $self->_tkt_assigned_person ($tkt);
-        if ($aid ne '(none)') { 
-            $assignedto = $self->user_by_name ($aid);
-        }
-
-        my $inc_num     = _incident_shorten ($self->_tkt_number ($tkt));
-        my $request     = $createdby->{'dv_user_name'} || '*unknown*';
-        my $assign      = $assignedto->{'dv_user_name'} || '*unassigned*';
-        my $group       = $self->_tkt_assigned_group ($tkt);
-        my $status      = $self->_tkt_status ($tkt) 
-                            || $self->_tkt_itil_state ($tkt) 
-                            || $self->_tkt_stage ($tkt);
-        my $created     = $self->_format_date ($self->_tkt_date_submit ($tkt));
-        my $updated     = $self->_format_date ($self->_tkt_date_update ($tkt));
-        my $description = $self->_tkt_summary ($tkt);
-
-        push @return, sprintf ("%-12.12s %-15.15s %-15.15s %-17.17s %17.17s",
-            $inc_num, $request, $assign, $group, $status );
-        push @return, sprintf (" Created: %-20.20s        Updated: %-20.20s",
-            $created, $updated);
-        push @return, sprintf (" Subject: %-70.70s", $description);
-    }
-    return wantarray ? @return : join ("\n", @return);
+    my ($obj, $result) = _tkt ($self, $tkt);
+    return $obj unless $result;
+    return $obj->string_short ($result);
 }
 
 =back
@@ -833,7 +716,7 @@ sub group_by_groupname {
     if (defined $GROUPCACHE{$name}) { return $GROUPCACHE{$name} }
     my @groups = $self->query ('sys_user_group', { 'name' => $name });
     return undef unless (scalar @groups == 1);
-    $GROUPCACHE{$name} = $groups[0];
+    $GROUPCACHE{$name} = $groups[0]->result;
     return $GROUPCACHE{$name};
 }
 
@@ -848,11 +731,12 @@ sub groups_by_username {
     my ($self, $user) = @_;
 
     my @entries;
-    foreach my $entry ($self->query ('sys_user_grmember',
+    foreach my $e ($self->query ('sys_user_grmember',
         { 'user' => $user } )) {
+        my $entry = $e->result;
         my $id = $$entry{'group'};
         foreach ($self->query ('sys_user_group', { 'sys_id' => $id })) {
-            push @entries, $_;
+            push @entries, $_->result;
         }
     }
     return @entries;
@@ -868,11 +752,12 @@ with a user in group I<NAME>.
 sub users_by_groupname {
     my ($self, $name) = @_;
     my @entries;
-    foreach my $entry ($self->query ('sys_user_grmember',
+    foreach my $e ($self->query ('sys_user_grmember',
         { 'group' => $name })) {
+        my $entry = $e->result;
         my $id = $$entry{'user'};
         foreach ($self->query ('sys_user', { 'sys_id' => $id })) {
-            push @entries, $_;
+            push @entries, $_->result;
         }
     }
     return @entries;
@@ -885,12 +770,12 @@ hashref.
 
 =cut
 
-sub user_by_name { 
+sub user_by_name {
     my ($self, $name) = @_;
     if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
     my @users = $self->query ('sys_user', { 'name' => $name });
     return undef unless (scalar @users == 1);
-    $USERCACHE{$name} = $users[0];
+    $USERCACHE{$name} = $users[0]->result;
     return $USERCACHE{$name};
 }
 
@@ -902,12 +787,12 @@ hashref.
 
 =cut
 
-sub user_by_username { 
+sub user_by_username {
     my ($self, $username) = @_;
     if (defined $USERCACHE{$username}) { return $USERCACHE{$username} }
     my @users = $self->query ('sys_user', { 'user_name' => $username });
     return undef unless (scalar @users == 1);
-    $USERCACHE{$username} = $users[0];
+    $USERCACHE{$username} = $users[0]->result;
     return $USERCACHE{$username};
 }
 
@@ -946,232 +831,40 @@ sub user_in_groups {
 =cut
 
 ##############################################################################
-### SHOULD MOVE TO ::CONFIG
-##############################################################################
-
-### set_ack (FIELD, VALUE)
-# Set $CONFIG->{ack}->{FIELD} = VALUE
-
-sub set_ack    { set_config ('ack', @_ ) }
-
-### set_config (FIELD, SUBFIELD, VALUE)
-# Set $CONFIG->{FIELD}->{SUBFIELD} = VALUE
-
-sub set_config {
-    my $config = $_->config_hash;
-    $config ->{$_[0]}->{$_[1]} = $_[2]
-}
-
-### set_ticket (FIELD, VALUE)
-# Set $CONFIG->{ticket}->{FIELD} = VALUE
-
-sub set_ticket { set_config ('ticket', @_ ) }
-
-##############################################################################
 ### Internal Subroutines #####################################################
 ##############################################################################
 
-### _format_date (SELF, TIME)
-# Generate a datetime from TIME.  If TIME is an INT, assume that it's
-# seconds-since-epoch; if it's a string, parse it with UnixDate to get
-# seconds-since-epoch; if we can
+### _tkt (SELF, TKT)
+# Takes a QueryResult object, and makes sure it's all clean; returns a new
+# object based on that result, and a hashref of the data from that result.
+# Used as the basis of a bunch of other functions.
 
-sub _format_date {
-    my ($self, $time, $zone) = @_;
-    if ($time =~ /^\d+$/) { }   # all is well
-    elsif ($time) { $time = UnixDate ($time || time, '%s'); }
-    return $time ? strftime ("%Y-%m-%d %H:%M:%S %Z", localtime($time))
-                 : sprintf ("%-20s", "(unknown)");
-}
-
-### _format_text (SELF, ARGHASH, TEXT)
-# Uses Text::Wrap to wrap TEXT.  ARGHASH provides parameters necessary for
-# Text::Wrap.  ARGHASH fields:
-#
-#    prefix     Prefix characters (generally '', '  ', or '    ')
-#
-# Returns an array of lines, or (as a scalar) a single string joined with
-# newlines.
-
-sub _format_text {
-    my ($self, $args, @print) = @_;
-    $args ||= {};
-
-    my $prefix = $$args{'prefix'}   || '';
-
-    my @return = wrap ($prefix, $prefix, @print);
-    return wantarray ? @return : join ("\n", @return, '');
-}
-
-### _format_text_field (SELF, ARGHASH, TEXTFIELDS)
-# Uses Text::Wrap to print wrapped text fields.  Specifically TEXTFIELDS
-# should contain pairs of field/value pairs.  ARGHASH fields:
-#
-#    minwidth   How big should the 'field' section be?  Generally ~30
-#               characters.
-#    prefix     Prefix characters (generally '', '  ', or '    ')
-#
-# Returns an array of lines, or (as a scalar) a single string joined with
-# newlines.
-
-sub _format_text_field {
-    my ($self, $args, @print) = @_;
-    $args ||= {};
-
-    my $prefix = $$args{'prefix'}   || '';
-    my $width  = $$args{'minwidth'} || 0;
-
-    my (@return, @entries);
-
-    while (@print) {
-        my ($field, $text) = splice (@print, 0, 2);
-        $field = "$field:";
-        push @entries, [$field, $text || "*unknown*"];
-        $width = length ($field) if length ($field) > $width;
-    }
-
-    foreach my $entry (@entries) {
-        my $field = '%-' . $width . 's';
-        push @return, wrap ($prefix, $prefix . ' ' x ($width + 1),
-            sprintf ("$field %s", @{$entry}));
-    }
-
-    return wantarray ? @return : join ("\n", @return, '');
-}
-
-### _incident_shorten (INC)
-# Trims off the leading 'INC' and leading 0s.
-
-sub _incident_shorten {
-    my ($inc) = @_;
-    $inc =~ s/^(INC|RITM|TASK|TKT)0+/$1/;
-    return $inc;
-}
-
-### _journal_* (SELF, TKT)
-# Returns the appropriate data from a passed-in ticket hash.
-
-sub _journal_author { $_[1]{'dv_sys_created_by'} || '(unknown)' }
-sub _journal_date   { $_[1]{'dv_sys_created_on'} || '(unknown)' }
-sub _journal_text   { $_[1]{'dv_value'}          || ''          }
-sub _journal_type   { $_[1]{'dv_element'}        || ''          }
-
-### _journal_entries (SELF, TKT)
-# List all journal entries associated with this object, sorted by date.
-
-sub _journal_entries {
+sub _tkt {
     my ($self, $tkt) = @_;
-    my (@return, %entries);
-    foreach my $entry ($self->query ('sys_journal_field',
-        { 'element_id' => $tkt->{'sys_id'} })) {
-        my $key = $self->_journal_date($entry);
-        $entries{$key} = $entry;
-    }
-    foreach (sort keys %entries) { push @return, $entries{$_} }
-
-    return @return;
-}
-
-### _tkt_* (SELF, TKT)
-# Returns the appropriate data from a passed-in ticket hash, or a suitable
-# default value.  Should be fairly self-explanatory.
-
-sub _tkt_assigned_group  { $_[1]{'dv_assignment_group'}  || '(none)'    }
-sub _tkt_assigned_person { $_[1]{'dv_assigned_to'}       || '(none)'    }
-sub _tkt_caller_id       { $_[1]{'dv_caller_id'} || $_[1]{'caller_id'} || '' }
-sub _tkt_date_resolved   { $_[1]{'dv_resolved_at'}       || ''          }
-sub _tkt_date_submit     { $_[1]{'dv_opened_at'}         || ''          }
-sub _tkt_date_update     { $_[1]{'dv_sys_updated_on'}    || ''          }
-sub _tkt_description     { $_[1]{'description'}          || ''          }
-sub _tkt_itil_state      { $_[1]{'u_itil_state'}         || ''          }
-sub _tkt_number          { $_[1]{'number'}               || '(none)'    }
-sub _tkt_opened_by       { $_[1]{'dv_opened_by'}         || '(unknown)' }
-sub _tkt_priority        { $_[1]{'dv_priority'}          || '(unknown)' }
-sub _tkt_requestor       { $_[1]{'dv_sys_created_by'}    || '(unknown)' }
-sub _tkt_resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }
-sub _tkt_resolved_code   { $_[1]{'close_code'}           || '(none)'    }
-sub _tkt_resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
-sub _tkt_stage           { $_[1]{'stage'}                || ''          }
-sub _tkt_state           { $_[1]{'incident_state'}       || 0           }
-sub _tkt_status          { $_[1]{'dv_incident_state'}    || '' }
-sub _tkt_summary         { $_[1]{'dv_short_description'} || '(none)'    }
-sub _tkt_svctype         { $_[1]{'u_service_type'}       || '(unknown)' }
-sub _tkt_urgency         { $_[1]{'dv_urgency'}           || '(unknown)' }
-
-### _tkt_filter (TYPE, ARGHASH)
-# Generates the text and "__encoded_query" search terms associated with ticket
-# searches.  We currently support:
-#
-#    submit_before  (INT)       opened_at < YYYY-MM-DD HH:MM:SS
-#    subtype        open        incident_state < 4
-#                   closed      incident_state >= 4
-#                   unresolved  incident_state < 7
-#                   other       (no filter)
-#    unassigned     (true)      assigned_to=NULL
-#
-# Returns two strings the EXTRA query and the TEXT associated with the search.
-
-sub _tkt_filter {
-    my ($type, %args) = @_;
-    my ($text, $extra);
-
-    my ($t) = _tkt_type(undef, $type);
-
-    my $subtype = $args{'subtype'} || '';
-    my $unassigned = $args{'unassigned'} || 0;
-
-    my $submit_before = $args{'submit_before'} || '';
-
-    my @extra;
-    if      (lc $subtype eq 'open') {
-        $text  = "Open ${type}s";
-        push @extra, "incident_state<4";
-        push @extra, "stage!=complete";
-        push @extra, "stage!=Request Cancelled";
-    } elsif (lc $subtype eq 'closed') {
-        $text = "Closed ${type}s";
-        push @extra, 'incident_state>=4';
-        push @extra, "stage=Request Cancelled";
-    } elsif (lc $subtype eq 'unresolved') {
-        $text = "Unresolved ${type}s";
-        push @extra, 'incident_state<7';
-        push @extra, "stage!=complete";
-    } elsif (defined ($subtype)) {
-        $text = "All ${type}s"
-    }
-
-    if ($unassigned) {
-        $text = "Unassigned $text";
-        push @extra, 'assigned_to=NULL';
-    }
-
-    if ($submit_before) {
-        my $time = strftime ("%Y-%m-%d %H:%M:%S %Z", localtime ($submit_before));
-        push @extra, "opened_at<$time";
-        $text  = "$text submitted before $time";
-    }
-    return (join ('^', @extra), $text);
+    my $result = $tkt->result           || return 'could not parse result';
+    my $table  = $tkt->table            || return 'could not parse table';
+    my $class   = $TICKET_TYPES{$table} || return "invalid table: $table";
+    my $obj     = $class->new ('connection' => $self);
+    return ($obj, $result);
 }
 
 ### _tkt_type (SELF, NAME)
 # Returns the associated table name for the given NAME.
 sub _tkt_type {
     my ($self, $name) = @_;
-    if ($name =~ /^inc/i)  { return 'incident'    }
-    if ($name =~ /^req/i)  { return 'sc_request'  }
-    if ($name =~ /^ritm/i) { return 'sc_req_item' }
-    if ($name =~ /^tas/i)  { return 'sc_task'     }
-    return $name;
+    my $class = $self->_tkt_type_by_number ($name);
+    if ($class) { return $class->type }
+    else        { return $name }
 }
 
 ### _tkt_type_by_number (SELF, NUMBER)
 # Returns the associated table name for the given NUMBER style.
 sub _tkt_type_by_number {
     my ($self, $number) = @_;
-    if ($number =~ /^INC/)  { return 'incident'    }
-    if ($number =~ /^REQ/)  { return 'sc_request'  }
-    if ($number =~ /^RITM/) { return 'sc_req_item' }
-    if ($number =~ /^TASK/) { return 'sc_task'     }
+    if ($number =~ /^INC/i)  { return 'FNAL::SNOW::Ticket::Incident' }
+    if ($number =~ /^REQ/i)  { return 'FNAL::SNOW::Ticket::Request'  }
+    if ($number =~ /^RITM/i) { return 'FNAL::SNOW::Ticket::RITM'     }
+    if ($number =~ /^TASK/i) { return 'FNAL::SNOW::Ticket::Task'     }
     return;
 }
 
@@ -1191,7 +884,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.
