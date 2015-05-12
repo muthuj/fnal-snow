@@ -32,7 +32,6 @@ use strict;
 use warnings;
 
 use Data::Dumper;
-use Date::Manip qw/UnixDate/;
 
 use FNAL::SNOW::Ticket;
 our @ISA = qw/FNAL::SNOW::Ticket/;
@@ -66,66 +65,7 @@ sub assign {
     return $self->update (%update);
 }
 
-=item build_filter (I<ARGHASH>)
-
-Generates the text and "__encoded_query" search terms associated with ticket
-searches.  We currently support:
-
-   submit_before  (INT)       opened_at < YYYY-MM-DD HH:MM:SS
-   subtype        open        incident_state < 4
-                  closed      incident_state >= 4
-                  unresolved  incident_state < 7
-                  other       (no filter)
-   unassigned     (true)      assigned_to=NULL
-
-Returns two strings: the EXTRA query and the TEXT associated with the search.
-
-(Note: the subtype bits may not work for RITMs yet.)
-
-=cut
-
-sub build_filter {
-    my ($self, %args) = @_;
-
-    my $submit_before = $args{'submit_before'} || '';
-    my $subtype       = $args{'subtype'}       || '';
-    my $unassigned    = $args{'unassigned'}    || 0;
-
-    my $type = $self->type_short;
-
-    my ($text, $extra);
-
-    my @extra;
-    if      (lc $subtype eq 'open') {
-        $text  = "Open ${type}s";
-        push @extra, "incident_state<4";
-        push @extra, "stage!=complete";
-        push @extra, "stage!=Request Cancelled";
-    } elsif (lc $subtype eq 'closed') {
-        $text = "Closed ${type}s";
-        push @extra, 'incident_state>=4';
-        push @extra, "stage=Request Cancelled";
-    } elsif (lc $subtype eq 'unresolved') {
-        $text = "Unresolved ${type}s";
-        push @extra, 'incident_state<7';
-        push @extra, "stage!=complete";
-    } elsif (defined ($subtype)) {
-        $text = "All ${type}s"
-    }
-
-    if ($unassigned) {
-        $text = "Unassigned $text";
-        push @extra, 'assigned_to=NULL';
-    }
-
-    if ($submit_before) {
-        my $time = strftime ("%Y-%m-%d %H:%M:%S %Z", localtime ($submit_before));
-        push @extra, "opened_at<$time";
-        $text  = "$text submitted before $time";
-    }
-    return (join ('^', @extra), $text);
-
-}
+### TODO: better build_filter for RITMs
 
 =item list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
 
@@ -198,7 +138,7 @@ sub create {
     return $items[0]->{number};
 }
 
-=item is_resolved (CODE)
+=item is_resolved (TICKETHASH)
 
 Returns 1 if the ticket is resolved, 0 otherwise.
 

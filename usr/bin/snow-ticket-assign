@@ -6,19 +6,19 @@ snow-ticket-assign - assign a Service Now ticket to a user/group
 
 =head1 SYNOPSIS
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP>
+B<snow-ticket-assign> INC00000534135 --group foo
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --user I<USER> 
+B<snow-ticket-assign> INC00000534135 --user bar
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --group I<GROUP> --user I<USER>
+B<snow-ticket-assign> INC00000534135 --group foobar --user baz
 
-B<snow-ticket-assign> F<INCIDENT_NUMBER> --user ''
+B<snow-ticket-assign> INC00000534135 --user ''
 
 B<snow-ticket-assign> --man
 
 =head1 DESCRIPTION
 
-snow-ticket-assign updates, the B<assigned_to> field, the B<assignment_group>
+snow-ticket-assign updates the B<assigned_to> field, the B<assignment_group>
 field, or both, for a specified Incident number.  The updated Incident
 information is then printed to STDOUT.
 
@@ -110,12 +110,10 @@ if ($GROUP) {
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
 unless (@tkt) { die "unable to load tkt: '$tktnum'\n"; }
-unless (scalar @tkt == 1) {
-    die "too many matches for tkt '$tktnum'\n";
-}
+unless (scalar @tkt == 1) { die "too many matches for tkt '$tktnum'\n" }
 my $tkt = $tkt[0];
 
-$GROUP ||= $tkt->{'dv_assignment_group'};
+$GROUP ||= $tkt->result->{'dv_assignment_group'};
 unless ($GROUP) { die "ticket is not in a group, no --group passed in\n" }
 
 if ($USER) {
@@ -126,31 +124,18 @@ if ($USER) {
 
 debug sprintf ("Assigning tkt to %s/%s",
     $GROUP || '*none*', $USER || '*none*');
-my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP, $uid);
+my @return = $SNOW->tkt_assign ($tkt, $GROUP, $uid);
 
-my $return = 0;
-if (scalar @return > 1) {
-    print "too many matches after update\n";
-    $return = 2;
-} elsif (scalar @return < 1) {
-    print "failed to reassign: no matches found on update()\n";
-    $return = 3;
-}
+if    (scalar @return > 1) { die "too many matches after update\n" }
+elsif (scalar @return < 1) { die "failed to reassign: no matches found\n" }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $tkt->{number}) {
-        print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number($tktnum));
-    } elsif (ref $ret) {
-        print "returned object did not match our original tkt number";
-        print scalar $SNOW->tkt_string_short ($ret);
-        $return = 1;
-    } else {
-        print "error: $ret\n";
-        $return = 1;
-    }
+    my $error = $SNOW->tkt_compare ($tkt, $ret);
+    if ($error) { die "error: $error\n" }
 }
 
-exit $return;
+print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number ($tktnum));
+exit 0;
 
 ##############################################################################
 ### Final Documentation ######################################################
@@ -160,7 +145,7 @@ exit $return;
 
 =over 4
 
-=item I<INCIDENT_NUMBER>
+=item I<TICKET_NUMBER>
 
 ID of a ticket number to update.  You can leave off the F<INC0+> values.
 
@@ -194,16 +179,13 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-    snow-ticket-assign INC389936 --group ECF-CIS
-    snow-ticket-assign INC389936 --group ECF-CIS --user tskirvin
-
 =head1 AUTHOR
 
 Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

@@ -1,4 +1,4 @@
-INCIDENT?= 'INC520944'
+INCIDENT?= 'INC00000534135'
 RITM?= 'RITM0208206'
 REQ?= 'REQ000000229964'
 
@@ -6,32 +6,32 @@ REQ?= 'REQ000000229964'
 ### Incidents / Tickets #################################################
 #########################################################################
 
-ticket-new:
-	@echo "Testing" | ../usr/bin/snow-ticket-create --subject testing \
-		--group ECF-CIS --ticket new-cis-ticket.yaml
+incident-new:
+	@echo "Testing" | ../usr/bin/snow-incident-create --subject testing \
+		--group ECF-CIS --ticket new-cis-ticket.yaml --debug
 
-ticket-list:
-	@ ../usr/bin/snow-ticket-list -g ECF-CIS
+incident-list:
+	@ ../usr/bin/snow-ticket-list -g ECF-CIS --debug
 
-ticket:
-	@ ../usr/bin/snow-ticket $(INCIDENT)
+incident:
+	@ ../usr/bin/snow-ticket $(INCIDENT) --debug
 
-ticket-journal:
-	@ ../usr/bin/snow-ticket-journal $(INCIDENT) 'testing again'
+incident-journal:
+	@ ../usr/bin/snow-ticket-journal $(INCIDENT) 'testing again' --debug
 
-ticket-assign:
-	@ ../usr/bin/snow-ticket-assign $(INCIDENT) -u tskirvin -g ECF-CIS
+incident-assign:
+	@ ../usr/bin/snow-ticket-assign $(INCIDENT) -u '' -g ECF-CIS --debug
 
-ticket-unassign:
-	@ ../usr/bin/snow-ticket-unassign $(INCIDENT)
+incident-unassign:
+	@ ../usr/bin/snow-ticket-unassign $(INCIDENT) --debug
 
-ticket-resolve:
-	@ ../usr/bin/snow-ticket-resolve $(INCIDENT) 'testing'
+incident-resolve:
+	@ ../usr/bin/snow-ticket-resolve $(INCIDENT) 'testing' --debug
 
-ticket-reopen:
-	@ ../usr/bin/snow-ticket-reopen $(INCIDENT)
+incident-reopen:
+	@ ../usr/bin/snow-ticket-reopen $(INCIDENT) --debug
 
-ticket-all: ticket-new ticket-list ticket ticket-journal ticket-assign ticket-unassign ticket-resolve ticket-reopen
+incident-all: ticket-new ticket-list ticket ticket-journal ticket-assign ticket-unassign ticket-resolve ticket-reopen
 
 #########################################################################
 ### RITMs ###############################################################
@@ -64,7 +64,7 @@ ritm-list-unresolved:
 		--query unresolved
 
 ritm:
-	@ ../usr/bin/snow-ticket $(RITM)
+	@ ../usr/bin/snow-ticket $(RITM) --debug
 
 ritm-debug:
 	@ ../usr/bin/snow-ticket $(RITM) --type debug
@@ -88,7 +88,7 @@ ritm-resolve:
 	@ ../usr/bin/snow-ticket-resolve $(RITM) 'testing'
 
 ritm-reopen:
-	@ ../usr/bin/snow-ticket-reopen $(RITM)
+	@ ../usr/bin/snow-ticket-reopen $(RITM) --debug
 
 #########################################################################
 ### Requests ############################################################

@@ -95,39 +95,25 @@ unless (scalar @tkt == 1) {
 my $tkt = $tkt[0];
 
 if ($SNOW->tkt_is_resolved ($tkt)) {
-    print "tkt is already resolved: '$tktnum'\n";
+    print "tkt is already resolved:\n";
     print scalar $SNOW->tkt_string_resolution ($tkt);
-    exit 1;
+    exit 0;
 }
 
 debug "Closing ticket";
-my @return = $SNOW->tkt_resolve ($$tkt{'number'},
-    'text' => $text, 'close_code' => $CODE,
-    'user' => $USER );
+my @return = $SNOW->tkt_resolve ($tkt, 'text' => $text, 
+    'close_code' => $CODE, 'user' => $USER );
 
-my $return = 0;
-if (scalar @return > 1) {
-    print "too many matches after update\n";
-    $return = 2;
-} elsif (scalar @return < 1) {
-    print "failed to reassign: no matches found on update()\n";
-    $return = 3;
-}
+if    (scalar @return > 1) { die "too many matches after update\n" } 
+elsif (scalar @return < 1) { die "failed to reassign: no matches found\n" }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $tkt->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number($tktnum));
-    } elsif (ref $ret) {
-        print "returned object did not match our original ticket number";
-        print scalar $SNOW->tkt_string_base ($ret);
-        $return = 1;
-    } else {
-        print "error: $ret\n";
-        $return = 1;
-    }
+    my $error = $SNOW->tkt_compare ($tkt, $ret);
+    if ($error) { die "error: $error\n" } 
 }
 
-exit $return;
+print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number ($tktnum));
+exit 0;
 
 ##############################################################################
 ### Final Documentation ######################################################
@@ -183,7 +169,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

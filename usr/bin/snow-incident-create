@@ -2,17 +2,17 @@
 
 =head1 NAME
 
-snow-ticket-create - assign a Service Now ticket to a user/group
+snow-incident-create - create a Service Now incident
 
 =head1 SYNOPSIS
 
-echo "test" | B<snow-ticket-create> --subject I<TEXT> --group I<GROUP>
+echo "test" | B<snow-incident-create> --subject 'testing' --group ECF-CIS
 
-B<snow-ticket-create> --man
+B<snow-incident-create> --man
 
 =head1 DESCRIPTION
 
-snow-ticket-create creates and assigns a new Incident.
+snow-incident-create creates and assigns a new Incident.
 
 =cut
 
@@ -67,7 +67,7 @@ sub load_yaml {
 sub debug { if ($DEBUG) { warn "@_\n" } }
 
 ### set_ticket (FIELD, VALUE)
-# 
+# Updates value of the ticket
 sub set_ticket { 
     my ($ticket, $field, $value) = @_;
     $ticket->{'ticket'}->{$field} = $value;
@@ -96,6 +96,7 @@ my $TICKET = load_yaml ($TICKET_FILE);
 debug ("Getting text on STDIN");
 my $description = join ("\n", <>);
 chomp $description;
+
 set_ticket ($TICKET, 'description', $description);
 set_ticket ($TICKET, 'short_description', $SUBJECT);
 
@@ -125,31 +126,18 @@ unless (scalar @tkt == 1) {
 my $tkt = $tkt[0];
 
 debug sprintf ("Assigning tkt to %s", $GROUP || '*none*');
-my @return = $SNOW->tkt_assign ($$tkt{'number'}, $GROUP);
+my @return = $SNOW->tkt_assign ($tkt, $GROUP);
 
-my $return = 0;
-if (scalar @return > 1) {
-    print "too many matches after update\n";
-    $return = 2;
-} elsif (scalar @return < 1) {
-    print "failed to reassign: no matches found on update()\n";
-    $return = 3;
-}
+if    (scalar @return > 1) { die "too many matches after update\n" }
+elsif (scalar @return < 1) { die "failed to reassign: no matches found\n" }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $tkt->{number}) {
-        print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number($tktnum));
-    } elsif (ref $ret) {
-        print "returned object did not match our original tkt number";
-        print scalar $SNOW->tkt_string_short ($ret);
-        $return = 1;
-    } else {
-        print "error: $ret\n";
-        $return = 1;
-    }
+    my $error = $SNOW->tkt_compare ($tkt, $ret);
+    if ($error) { die "error: $error\n" }
 }
 
-exit $return;
+print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number ($tktnum));
+exit 0;
 
 ##############################################################################
 ### Final Documentation ######################################################
@@ -233,7 +221,7 @@ B<FNAL::SNOW>
 
 =head1 EXAMPLE
 
-    echo "testing" | snow-ticket-create --ticket template.yaml \
+    echo "testing" | snow-incident-create --ticket template.yaml \
         --subject testing --group ECF-CIS
 
 =head1 AUTHOR
@@ -242,7 +230,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

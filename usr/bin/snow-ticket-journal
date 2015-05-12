@@ -6,7 +6,13 @@ snow-ticket-journal - adds a journal entry for a Service Now ticket
 
 =head1 SYNOPSIS
 
-B<snow-ticket-journal> F<TICKET_NUMBER> F<TEXT>
+snow-ticket-journal INC389936 "testing"
+
+snow-ticket-journal INC389936 --type comment "testing2"
+
+snow-ticket-journal INC389936 --type work_notes "testing3"
+
+echo "testing4" | snow-ticket-journal INC389936 --type work_notes --stdin
 
 B<snow-ticket-journal> --man
 
@@ -98,11 +104,11 @@ unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
 unless (scalar @tkt == 1) {
     die "too many matches for ticket '$tktnum'\n";
 }
-my $inc = $tkt[0];
+my $tkt = $tkt[0];
 
 debug "Adding journal entry";
 
-my @return = $SNOW->tkt_update ($$inc{'number'},
+my @return = $SNOW->tkt_update ($tkt,
     $TYPE => "$USER: $text", 'type' => $TYPE, 'user' => $USER);
 
 my $return = 0;
@@ -111,19 +117,16 @@ if (scalar @return > 1) {
     $return = 2;
 } elsif (scalar @return < 1) {
     print "failed to reassign: no matches found on update()\n";
-    $return = 3;
+    $return = 2;
 }
 
 foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $inc->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number ($tktnum));
-    } elsif (ref $ret) {
-        print "returned object did not match our original tkt number";
-        print scalar $SNOW->tkt_string_base ($ret);
+    my $error = $SNOW->tkt_compare ($tkt, $ret);
+    if ($error) {
+        print "error: $error\n";
         $return = 1;
     } else {
-        print "error: $ret\n";
-        $return = 1;
+        print scalar $SNOW->tkt_string_base ($ret)
     }
 }
 
@@ -173,9 +176,6 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-=head1 EXAMPLES
-
-    snow-ticket-journal INC389936 "testing"
 
 =head1 AUTHOR
 
@@ -183,7 +183,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

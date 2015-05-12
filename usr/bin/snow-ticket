@@ -6,17 +6,25 @@ snow-ticket - print information about a Service Now ticket
 
 =head1 SYNOPSIS
 
-B<snow-ticket> F<INCIDENT_NUMBER>
+B<snow-ticket> INC000000535558
+
+B<snow-ticket> TASK0029147 --type debug
+
+B<snow-ticket> REQ000181628 --type journal
+
+B<snow-ticket> RITM82493 --type short
+
+B<snow-ticket> INC000000535558 TASK0029147
 
 B<snow-ticket> --man
 
 =head1 DESCRIPTION
 
 snow-ticket prints useful information to STDOUT about a Service Now ticket
-(defined here as an Incident, Request, Requested Item, or Task).  Specifically,
-we query the SNOW database for a given number (or list of numbers), and for
-each one we create a human-readable report containing relevant information
-(selected at the module level).
+(e.g. an Incident or Requested Item).  Specifically, we query the SNOW
+database for a given number (or list of numbers), and for each one we create a
+human-readable report containing relevant information (selected at the module
+level).
 
 =cut
 
@@ -117,7 +125,11 @@ exit 0;
 
 =item B<--config> I<CONFIG>
 
+Use this alternate configuration file.
+
 =item B<--debug>
+
+If set, print debugging information to STDOUT.
 
 =item B<--type> I<TYPE>
 
@@ -208,20 +220,13 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-=head1 EXAMPLES
-
-    snow-ticket INC000000389936
-    snow-ticket TASK0029147
-    snow-ticket REQ000181628
-    snow-ticket RITM82493
-
 =head1 AUTHOR
 
 Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

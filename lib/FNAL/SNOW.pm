@@ -1,5 +1,5 @@
 package FNAL::SNOW;
-our $VERSION = "1.02";
+our $VERSION = "1.1.0";
 
 =head1 NAME
 
@@ -13,7 +13,10 @@ FNAL::SNOW - working with the FNAL Service Now implementation
   my $config = $SNOW->config_hash;
   $snow->connect;
 
-  [...]
+  my $number = 'INC0000xxxxx';
+  foreach my $tkt ($snow->tkt_by_number ($number)) {
+      print scalar $snow->tkt_string_base ($tkt);
+  }
 
 =head1 DESCRIPTION
 
@@ -37,8 +40,10 @@ user scripts and automation.
 
 our %TICKET_TYPES = (
     'incident'    => 'FNAL::SNOW::Ticket::Incident',
-    'sc_req_item' => 'FNAL::SNOW::Ticket::RITM',
+    'request'     => 'FNAL::SNOW::Ticket::Request',
     'ritm'        => 'FNAL::SNOW::Ticket::RITM',
+    'sc_req_item' => 'FNAL::SNOW::Ticket::RITM',
+    'task'        => 'FNAL::SNOW::Ticket::Task',
     'ticket'      => 'FNAL::SNOW::Ticket::Incident',
 );
 
@@ -63,8 +68,23 @@ foreach my $tkt (sort keys %TICKET_TYPES) {
     if ( $@ ) { die $@ }
 }
 
-## Primary and simple data structure, this should be fairly straightforward
-## compared to normal perl modules.
+=head1 DATA STRUCTURES
+
+=over 4
+
+=item FNAL::SNOW
+
+Primary and simple data structure, this should be fairly straightforward
+compared to normal perl modules.
+
+    'config'      => '$'
+    'config_file' => '$'
+    'debug'       => '$'
+    'sn'          => '$'
+    'snconf'      => '$'
+
+=cut
+
 struct 'FNAL::SNOW' => {
     'config'      => '$',
     'config_file' => '$',
@@ -73,16 +93,32 @@ struct 'FNAL::SNOW' => {
     'snconf'      => '$',
 };
 
-## When we do queries, we want to store what table we were searching as well as
-## the results.
+=item FNAL::SNOW::QueryResult
+
+The result of queries will be a simple object that stores the actual data
+results, as well as the table in which we searched.
+
+    'result' => '$'
+    'table'  => '$'
+
+=cut
+
 struct 'FNAL::SNOW::QueryResult' => {
     'result' => '$',
     'table'  => '$'
 };
 
-## Cache user and group data, because it gets repeated a lot and SNOW isn't
-## really that fast.
-use vars qw/%GROUPCACHE %USERCACHE %NAMECACHE/;
+=item %GROUPCACHE, %NAMECACHE, %USERCACHE, %USERIDCACHE
+
+Simple hashes to cache user and group query data.
+
+=cut
+
+use vars qw/%GROUPCACHE %USERCACHE %USERIDCACHE %NAMECACHE/;
+
+=back
+
+=cut
 
 ##############################################################################
 ### Initialization Subroutines ###############################################
@@ -178,18 +214,29 @@ B<ServiceNow::GlideRecord>.
 
 =item create (TABLE, PARAMS)
 
-Inserts a new item into the Service Now database in table I<TABLE> and based on
-the parameters in the hashref I<PARAMS>.  Returns the matching items (as pulled
-from another query based on the returned sys_id).
+Inserts a new item into the Service Now database in table I<TABLE> and based
+on the parameters in the hashref I<PARAMS>.  Returns an array of matching
+B<FNAL:SNOW::QueryResult> objects the matching items (as pulled from another
+query based on the returned sys_id).
 
 =cut
 
 sub create {
     my ($self, $table, $params) = @_;
     my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
+    if ($self->debug) {
+        print "insert: $table, ", Data::Dumper->new ([$params], ['params'])
+                ->Indent(0)->Quotekeys(0)->Dump;
+    }
     my $id = $glide->insert ($params);
-    return unless $id;
-    return $self->query ($table, {'sys_id' => $id} )
+    if ($id) {
+        if ($self->debug) { printf " - created id $id\n" }
+        return $self->query ($table, {'sys_id' => $id} );
+    } else {
+        if ($self->debug) { printf " - failed to create\n" }
+        return;
+    }
+
 }
 
 =item query (TABLE, PARAMS)
@@ -203,6 +250,10 @@ B<FNAL::SNOW::QueryResult> objects.
 sub query {
     my ($self, $table, $params) = @_;
     my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
+    if ($self->debug) {
+        print "query: $table, ", Data::Dumper->new ([$params], ['params'])
+                ->Indent(0)->Quotekeys(0)->Dump;
+    }
     $glide->query ($params);
 
     my @return;
@@ -212,6 +263,7 @@ sub query {
             'table' => $table, 'result' => \%record );
         push @return, $obj;
     }
+    if ($self->debug) { printf " - %d results\n", scalar(@return) }
     return @return;
 }
 
@@ -226,6 +278,10 @@ array of updated entries.
 sub update {
     my ($self, $table, $query, $update) = @_;
     my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
+    if ($self->debug) {
+        print "update: $table, ", Data::Dumper->new ([$query, $update],
+            ['query', 'update'])->Indent(0)->Quotekeys(0)->Dump;
+    }
     $glide->query ($query);
 
     my @return;
@@ -235,8 +291,11 @@ sub update {
         }
         $glide->update();
         my %record = $glide->getRecord();
-        push @return, \%record;
+        my $obj = FNAL::SNOW::QueryResult->new (
+            'table' => $table, 'result' => \%record );
+        push @return, $obj;
     }
+    if ($self->debug) { printf " - %d results\n", scalar(@return) }
 
     return @return;
 }
@@ -248,32 +307,27 @@ Note: there is no B<delete()>.
 =cut
 
 ##############################################################################
-### Ticket Subroutines #######################################################
+### Ticket Queries ###########################################################
 ##############################################################################
 
-=head2 Tickets
+=head2 Tickets Queries
 
-These subroutines manipulate Incidents.  (They should probably be moved off to
-a separate class).
+These subroutines query tickets from the SNOW database.  I<TYPE> is
+the type of ticket we're looking for - Incident, Task, etc.  We return
+B<FNAL::SNOW::QueryResult> objects.
 
 =over 4
 
-=item tkt_assign (I<NUMBER>, I<GROUP>, I<USER>)
+=item tkt_list_by_assignee (I<TYPE>, I<EXTRA>)
 
-Assigns ticket I<NUMBER> to a given group and/or user.  If we are given a blank
-value for I<USER>, we will clear the assignment field.  Returns an array of
-updated Incident hashrefs (hopefully just one!).
+Queries for incidents assigned to the user I<NAME>.  Returns an array of
+matching objects.  Uses B<tkt_list_by_type()>.
 
 =cut
 
-sub tkt_assign {
-    my ($self, $number, $group, $user) = @_;
-
-    my %update = ();
-    if ($group)        { $update{'assignment_group'} = $group }
-    if (defined $user) { $update{'assigned_to'}    = $user || 0 }
-
-    return $self->update ($number, %update);
+sub tkt_list_by_assignee {
+    my ($self, $type, $user, $extra) = @_;
+    $self->tkt_list_by_type ( $type, { 'assigned_to' => $user }, $extra )
 }
 
 =item tkt_list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
@@ -294,43 +348,63 @@ sub tkt_list_by_type {
     return @entries;
 }
 
-=item tkt_list_by_assignee (I<TYPE>, I<EXTRA>)
-
-Queries for incidents assigned to the user I<NAME>.  Returns an array of
-matching entries.
+=back
 
 =cut
 
-sub tkt_list_by_assignee {
-    my ($self, $type, $user, $extra) = @_;
-    $self->tkt_list_by_type ( $type, { 'assigned_to' => $user }, $extra )
+##############################################################################
+### Generic Ticket Actions ###################################################
+##############################################################################
+
+=head2 Generic Ticket Actions
+
+These should ideally work against incidents, tasks, requests, etc, without
+needing any actual reference to a specific ticket.
+
+=over 4
+
+=item tkt_by_number (NUMBER)
+
+Queries for the ticket I<NUMBER> (after passing that field through
+B<FNAL::SNOW::Ticket>'s B<parse_ticket_number()> for consistency and to figure
+out what kind of ticket we're looking at).  Returns an array of matching
+FNAL::SNOW::QueryResult entries.
+
+=cut
+
+sub tkt_by_number {
+    my ($self, $number) = @_;
+    my $num = FNAL::SNOW::Ticket->parse_ticket_number ($number) || return;
+    my $type = $self->_tkt_type_by_number ($num) || return;
+    my $obj = $type->new ('connection' => $self);
+    return $obj->search ({ 'number' => $num });
 }
 
-sub incident_list_by_assignee { shift->tkt_list_by_assignee ('Incident', @_) }
+=item tkt_create (TYPE, TICKETHASH)
 
-=item parse_ticket_number (NUMBER)
-
-Standardizes an incident number into the 15-character string starting with
-'INC' (or similar).
+Creates a new ticket of type I<TYPE>, and returns the number of the created
+ticket (or undef on failure).
 
 =cut
 
-sub parse_ticket_number {
-    my ($self, $num) = @_;
-    return $num if $num && $num =~ /^(INC|REQ)/ && length ($num) == 15;
-    return $num if $num && $num =~ /^(TASK|RITM)/ && length ($num) == 11;
+sub tkt_create {
+    my ($self, $type, %ticket) = @_;
+    my @items = $self->create ($type, \%ticket);
+    return undef unless (@items && scalar @items == 1);
+    return $items[0]->result->{number};
+}
 
-    $num ||= "";
-    if ($num =~ /^(INC|REQ)(\d+)$/) {
-        $num = join ('', $1, ('0' x (15 - length ($num))), $2);
-    } elsif ($num =~ /^(TASK|RITM)(\d+)$/) {
-        $num = join ('', $1, ('0' x (11 - length ($num))), $2);
-    } elsif ($num =~ /^(\d+)/) {
-        $num = join ('', 'INC', ('0' x (12 - length ($num))), $1);
-    } else {
-        return;
-    }
-    return $num;
+=item tkt_search (TYPE, SEARCH, EXTRA)
+
+Search for a ticket.
+
+=cut
+
+sub tkt_search {
+    my ($self, $type, $search, $extra) = @_;
+    if ($extra) { $$search{'__encoded_query'} = $extra }
+    my @entries = $self->query($type, $search );
+    return @entries;
 }
 
 =back
@@ -338,7 +412,117 @@ sub parse_ticket_number {
 =cut
 
 ##############################################################################
-### Incident Lists ###########################################################
+### Ticket Manipulation ######################################################
+##############################################################################
+
+=head2 Ticket Manipulation
+
+These functions manipulate existing B<FNAL::SNOW::QueryResult> objects, and
+wrap the per-ticket-class module equivalent functions.
+
+=over 4
+
+=item tkt_assign (TKT_QR, GROUP, USER)
+
+Assigns ticket I<NUMBER> to a given group and/or user.  If we are given a blank
+value for I<USER>, we will clear the assignment field.  Returns an array of
+updated B<FNAL::SNOW::QueryResult> objects (hopefully just one!).
+
+=cut
+
+sub tkt_assign {
+    my ($self, $tkt, $group, $user) = @_;
+    my ($obj, $result) = $self->_tkt ($tkt);
+    $obj->assign ($result->{'number'}, $group, $user);
+}
+
+=item tkt_compare (TKT_QR1, TKT_QR2)
+
+=cut
+
+sub tkt_compare {
+    my ($self, $tkt1, $tkt2) = @_;
+    return "invalid ticket: $tkt1" unless $tkt1 && ref $tkt1;
+    return "invalid ticket: $tkt2" unless $tkt2 && ref $tkt2;
+
+    my ($obj1, $result1) = $self->_tkt ($tkt1);
+    my ($obj2, $result2) = $self->_tkt ($tkt2);
+
+    my $num1 = $result1->{'number'}; my $num2 = $result2->{'number'};
+    return undef if ($num1 eq $num2);
+    return sprintf ('tickets do not match: %s vs %s', $num1, $num2);
+}
+
+=item tkt_is_resolved (TKT_QR)
+
+Returns 1 if the ticket is resolved, 0 otherwise.  If there's an error in
+detection, print an error message and return that instead.
+
+=cut
+
+sub tkt_is_resolved {
+    my ($self, $tkt) = @_;
+    my ($obj, $result) = $self->_tkt ($tkt);
+    my $return = $obj->is_resolved ($result);
+    if ($return =~ /^\d+$/) { return $return }
+    else {
+        print "error: $return\n";
+        return undef;
+    }
+}
+
+=item tkt_reopen (TKT_QR)
+
+Attempts to re-open the ticket.  The actual work is ticket-type specific, via
+function B<reopen()>.
+
+Returns an array of B<FNAL::SNOW::QueryResult> objects matching the updated
+entries.
+
+=cut
+
+sub tkt_reopen {
+    my ($self, $tkt) = @_;
+    my ($obj, $result) = $self->_tkt ($tkt);
+    return $obj->reopen ($result->{number})
+}
+
+=item tkt_resolve (TKT_QR, ARGHASH)
+
+Attempts to mark the ticket as status 'Resolved'.  The actual work is
+ticket-type specific, via function B<resolve()>.  I<ARGHASH> is passed to
+this function as well.
+
+Returns an array of B<FNAL::SNOW::QueryResult> objects matching the updated
+entries.
+
+=cut
+
+sub tkt_resolve {
+    my ($self, $tkt, %args) = @_;
+    my ($obj, $result) = $self->_tkt ($tkt);
+    return $obj->resolve ($result->{number}, %args)
+}
+
+=item tkt_update (TKT_QR, ARGHASH)
+
+Updates the ticket with the content of I<ARGHASH>.
+
+Returns an array of B<FNAL::SNOW::QueryResult> objects matching the updated
+entries.
+
+=cut
+
+sub tkt_update {
+    my ($self, $tkt, %args) = @_;
+    my ($obj, $result) = $self->_tkt ($tkt);
+    return $obj->update ($result->{'number'}, %args);
+}
+
+=cut
+
+##############################################################################
+### Ticket Lists #############################################################
 ##############################################################################
 
 =head2 Ticket List Text Functions
@@ -466,141 +650,17 @@ sub text_tktlist_unresolved {
 =cut
 
 ##############################################################################
-### Generic Ticket Actions ###################################################
-##############################################################################
-
-=head2 Generic Ticket Actions
-
-These should ideally work against incidents, tasks, requests, etc.
-
-=over 4
-
-=item tkt_by_number
-
-Queries for the ticket I<NUMBER> (after passing that field through
-B<parse_ticket_number()> for consistency and to figure out what kind of ticket
-we're looking at).  Returns an array of matching FNAL::SNOW::QueryResult
-entries.
-
-=cut
-
-sub tkt_by_number {
-    my ($self, $number) = @_;
-    my $num = $self->parse_ticket_number ($number) || return;
-    my $type = $self->_tkt_type_by_number ($num) || return;
-    my $obj = $type->new ('connection' => $self);
-    return $obj->search ({ 'number' => $num });
-}
-
-=item tkt_create (
-
-Creates a new ticket of type I<TYPE>, and returns the number of the created
-ticket (or undef on failure).
-
-=cut
-
-sub tkt_create {
-    my ($self, $type, %ticket) = @_;
-    my @items = $self->create ($type, \%ticket);
-    return undef unless (@items && scalar @items == 1);
-    return $items[0]->{number};
-}
-
-=item tkt_is_resolved (CODE)
-
-Returns 1 if the ticket is resolved, 0 otherwise.
-
-=cut
-
-sub tkt_is_resolved { return _tkt_state (@_) >= 4 ? 1 : 0 }
-
-=item tkt_reopen
-
-Update the ticket to set the incident_state back to 'Work In Progress',
-and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>,
-and I<resolved_by>.
-
-Uses B<tkt_update()>.
-
-=cut
-
-sub tkt_reopen {
-    my ($self, $code, %args) = @_;
-    my %update = (
-        'incident_state' => 2,      # 'Work In Progress'
-        'close_notes'    => 0,
-        'close_code'     => 0,
-        'resolved_at'    => 0,
-        'resolved_by'    => 0,
-    );
-    return $self->tkt_update ($code, %update);
-}
-
-=item tkt_resolve ( CODE, ARGUMENT_HASH )
-
-Updates the ticket to status 'resolved', as well as the following fields
-based on I<ARGUMENT_HASH>:
-
-   close_code       The resolution code (which can be anything, but FNAL has
-                    a set list that they want it to be)
-   text             Text to go in the resolution text.
-   user             Set 'resolved_by' to this user.
-
-Uses B<tkt_update()>.
-
-=cut
-
-sub tkt_resolve {
-    my ($self, $code, %args) = @_;
-    my %update = (
-        'incident_state' => 6,      # 'Resolved'
-        'close_notes'    => $args{'text'},
-        'close_code'     => $args{'close_code'},
-        'resolved_by'    => $args{'user'},
-    );
-    return $self->tkt_update ($code, %update);
-}
-
-=item tkt_search (TYPE, SEARCH, EXTRA)
-
-Search for a ticket.
-
-=cut
-
-sub tkt_search {
-    my ($self, $type, $search, $extra) = @_;
-    if ($extra) { $$search{'__encoded_query'} = $extra }
-    my @entries = $self->query($type, $search );
-    return @entries;
-}
-
-
-=item tkt_update (CODE, ARGUMENTS)
-
-Update the ticket, incident, or task associated with the string I<CODE>.
-Uses B<update()>, with a hash made of I<ARGUMENTS>.
-
-=cut
-
-sub tkt_update {
-    my ($self, $code, %args) = @_;
-    return $self->update ($self->_tkt_type_by_number($code),
-        { 'number' => $code }, \%args);
-}
-
-=back
-
-=cut
-
-##############################################################################
 ### Text-Based Ticket Reporting ##############################################
 ##############################################################################
 
 =head2 Text-Based Ticket Reporting
 
+These functions take existing B<FNAL::SNOW::QueryResult> objects, wrapping
+the per-ticket-class module equivalent functions, to produce text output.
+
 =over 4
 
-=item tkt_string_assignee (TKT)
+=item tkt_string_assignee (TKT_QR)
 
 Generates a report of the assignee information.
 
@@ -613,7 +673,7 @@ sub tkt_string_assignee {
     return $obj->string_assignee ($result)
 }
 
-=item tkt_string_base (TICKET)
+=item tkt_string_base (TKT_QR)
 
 Generates a combined report, with the primary, requestor, assignee,
 description, journal (if present), and resolution status (if present).
@@ -627,7 +687,7 @@ sub tkt_string_base {
     return $obj->string_base ($result);
 }
 
-=item tkt_string_debug (TICKET)
+=item tkt_string_debug (TKT_QR)
 
 Generates a report showing the content of every field (empty or not).
 
@@ -640,7 +700,7 @@ sub tkt_string_debug {
     return $obj->string_debug ($result);
 }
 
-=item tkt_string_description (TICKET)
+=item tkt_string_description (TKT_QR)
 
 Generates a report showing the user-provided description.
 
@@ -653,7 +713,7 @@ sub tkt_string_description {
     return $obj->string_description ($result);
 }
 
-=item tkt_string_journal (TICKET)
+=item tkt_string_journal (TKT_QR)
 
 Generates a report showing all journal entries associated with this ticket, in
 reverse order (blog style).
@@ -703,6 +763,9 @@ sub tkt_string_short {
 
 =head2 Users and Groups
 
+Service Now has user and group tables.  We can access them directly here, and
+cache the results within a single run.
+
 =over 4
 
 =item group_by_groupname (I<NAME>)
@@ -716,7 +779,7 @@ sub group_by_groupname {
     if (defined $GROUPCACHE{$name}) { return $GROUPCACHE{$name} }
     my @groups = $self->query ('sys_user_group', { 'name' => $name });
     return undef unless (scalar @groups == 1);
-    $GROUPCACHE{$name} = $groups[0]->result;
+    _populate_groupcache($groups[0]->result);
     return $GROUPCACHE{$name};
 }
 
@@ -775,10 +838,25 @@ sub user_by_name {
     if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
     my @users = $self->query ('sys_user', { 'name' => $name });
     return undef unless (scalar @users == 1);
-    $USERCACHE{$name} = $users[0]->result;
+    _populate_usercache ($users[0]->result);
     return $USERCACHE{$name};
 }
 
+=item user_by_sysid (I<SYS_ID>)
+
+Give the user hashref associated with id I<SYS_ID>.  Returns the first matching
+hashref.
+
+=cut
+
+sub user_by_sysid {
+    my ($self, $sysid) = @_;
+    if (defined $USERIDCACHE{$sysid}) { return $USERIDCACHE{$sysid} }
+    my @users = $self->query ('sys_user', { 'sys_id' => $sysid });
+    return undef unless (scalar @users == 1);
+    _populate_usercache ($users[0]->result);
+    return $USERIDCACHE{$sysid};
+}
 
 =item user_by_username (I<NAME>)
 
@@ -792,7 +870,7 @@ sub user_by_username {
     if (defined $USERCACHE{$username}) { return $USERCACHE{$username} }
     my @users = $self->query ('sys_user', { 'user_name' => $username });
     return undef unless (scalar @users == 1);
-    $USERCACHE{$username} = $users[0]->result;
+    _populate_usercache ($users[0]->result);
     return $USERCACHE{$username};
 }
 
@@ -804,9 +882,13 @@ Returns 1 if the given USER is in group GROUP.
 
 sub user_in_group {
     my ($self, $username, $group) = @_;
-    my @users = $self->users_by_groupname ($group);
-    foreach (@users) {
-        return 1 if $_->{dv_user_name} eq $username;
+    foreach my $e ($self->query ('sys_user_grmember',
+        { 'group' => $group })) {
+        my $entry = $e->result;
+        my $id = $$entry{'user'};
+        foreach ($self->query ('sys_user', { 'sys_id' => $id })) {
+            return 1 if $_->result->{dv_user_name} eq $username
+        }
     }
     return 0;
 }
@@ -834,6 +916,23 @@ sub user_in_groups {
 ### Internal Subroutines #####################################################
 ##############################################################################
 
+### _populate_groupcache (RESULT)
+# Populate the contents of %GROUPCACHE
+sub _populate_groupcache {
+    my ($result) = @_;
+    $GROUPCACHE  { $$result{'name'}} = $result;
+}
+
+### _populate_usercache (RESULT)
+# Populate the contents of %USERCACHE, %USERIDCACHE, %NAMECACHE
+sub _populate_usercache {
+    my ($result) = @_;
+    $USERCACHE  { $$result{'user_name'}} = $result;
+    $USERIDCACHE{ $$result{'sys_id'}  }  = $result;
+    $NAMECACHE  { $$result{'name'}    }  = $result;
+    return $result;
+}
+
 ### _tkt (SELF, TKT)
 # Takes a QueryResult object, and makes sure it's all clean; returns a new
 # object based on that result, and a hashref of the data from that result.
@@ -841,10 +940,10 @@ sub user_in_groups {
 
 sub _tkt {
     my ($self, $tkt) = @_;
-    my $result = $tkt->result           || return 'could not parse result';
-    my $table  = $tkt->table            || return 'could not parse table';
-    my $class   = $TICKET_TYPES{$table} || return "invalid table: $table";
-    my $obj     = $class->new ('connection' => $self);
+    my $result = $tkt->result || return 'could not parse result';
+    my $table  = $tkt->table  || return 'could not parse table';
+    my $class  = $TICKET_TYPES{$table} || return "invalid table: $table";
+    my $obj    = $class->new ('connection' => $self);
     return ($obj, $result);
 }
 
