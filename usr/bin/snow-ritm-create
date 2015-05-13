@@ -2,27 +2,17 @@
 
 =head1 NAME
 
-snow-ticket-assign - assign a Service Now ticket to a user/group
+snow-ritm-create - create a Service Now ritm
 
 =head1 SYNOPSIS
 
-B<snow-ticket-assign> INC00000534135 --group foo
+echo "test" | B<snow-ritm-create> --subject 'testing' --group ECF-CIS
 
-B<snow-ticket-assign> INC00000534135 --user bar
-
-B<snow-ticket-assign> INC00000534135 --group foobar --user baz
-
-B<snow-ticket-assign> INC00000534135 --user ''
-
-B<snow-ticket-assign> --man
+B<snow-ritm-create> --man
 
 =head1 DESCRIPTION
 
-snow-ticket-assign updates the B<assigned_to> field, the B<assignment_group>
-field, or both, for a specified Incident number.  The updated Incident
-information is then printed to STDOUT.
-
-Note that if you want to clear the assignment field, you can set I<--user ''>.
+snow-ritm-create creates and assigns a new Incident.
 
 =cut
 
@@ -33,8 +23,10 @@ Note that if you want to clear the assignment field, you can set I<--user ''>.
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
+our $TYPE = 'ritm';
+our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
 
-use vars qw/$USER $GROUP/;
+use vars qw/$USER $GROUP $SUBJECT $TICKET_FILE $REQUEST/;
 
 ##############################################################################
 ### Declarations #############################################################
@@ -46,6 +38,7 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 use FNAL::SNOW;
+use YAML::Syck;
 
 $|++;
 
@@ -60,9 +53,25 @@ sub error_usage {
     pod2usage (-msg => $error, -exit_status => 2, -verbose => 1);
 }
 
+### load_yaml (FILE)
+# Load a configuration file from YAML
+sub load_yaml {
+    my ($file) = @_;
+    my $yaml = YAML::Syck::LoadFile ($file);
+    unless ($yaml) { die "could not open $file: $@\n" }
+    return $yaml;
+}
+
 ### debug (MSG)
 # Print a debugging message if $DEBUG is set.
 sub debug { if ($DEBUG) { warn "@_\n" } }
+
+### set_ticket (FIELD, VALUE)
+# Updates value of the ticket
+sub set_ticket { 
+    my ($ticket, $field, $value) = @_;
+    $ticket->{'ticket'}->{$field} = $value;
+}
 
 ##############################################################################
 ### main () ##################################################################
@@ -72,17 +81,26 @@ my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
     'd|debug'    => \$DEBUG,
     'c|config=s' => \$CONFIG_FILE,
+    't|ticket=s' => \$TICKET_FILE,
+    'type=s'     => \$TYPE,
     'u|user=s'   => \$USER,
+    'subject=s'  => \$SUBJECT,
+    'request=s'  => \$REQUEST,
     'g|group=s'  => \$GROUP,
     'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-unless (defined $USER or defined $GROUP) {
-    error_usage ("must define a user (may be blank), a group, or both");
-}
+unless (defined $GROUP) { error_usage ("must define a group") }
+unless (defined $REQUEST) { error_usage ("must define a base request") }
 
-my ($tktnum, @rest) = @ARGV;
-error_usage ("no tkt listed" ) unless ($tktnum);
+my $TICKET = load_yaml ($TICKET_FILE);
+
+debug ("Getting text on STDIN");
+my $description = join ("\n", <>);
+chomp $description;
+
+# set_ticket ($TICKET, 'description', $description);
+# set_ticket ($TICKET, 'short_description', $SUBJECT);
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -91,40 +109,20 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-my $uid = '';
-if ($USER) {
-    debug "Looking up user '$USER'";
-    my $u = $SNOW->user_by_username ($USER);
-    unless ($u) { die "invalid user: $USER\n" }
-    $uid = $u->{'sys_id'};
-}
-
-my $gid = '';
-if ($GROUP) {
-    debug "Looking up group '$GROUP'";
-    my $g = $SNOW->group_by_groupname ($GROUP);
-    unless ($g) { die "invalid group: $GROUP\n" }
-    $gid = $g->{'sys_id'};
-}
+debug ("creating a new entry in Service Now");
+my $tktnum = $SNOW->tkt_create ($TYPE, %{$TICKET->{ticket}});
+die "unable to create ritm\n" unless $tktnum;
 
 debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
 unless (@tkt) { die "unable to load tkt: '$tktnum'\n"; }
-unless (scalar @tkt == 1) { die "too many matches for tkt '$tktnum'\n" }
+unless (scalar @tkt == 1) {
+    die "too many matches for tkt '$tktnum'\n";
+}
 my $tkt = $tkt[0];
 
-$GROUP ||= $tkt->result->{'dv_assignment_group'};
-unless ($GROUP) { die "ticket is not in a group, no --group passed in\n" }
-
-if ($USER) {
-    debug ("confirming that user '$USER' is in group '$GROUP'");
-    die "user '$USER' is not in group '$GROUP'\n" 
-        unless $SNOW->user_in_group ($USER, $GROUP);
-}
-
-debug sprintf ("Assigning tkt to %s/%s",
-    $GROUP || '*none*', $USER || '*none*');
-my @return = $SNOW->tkt_assign ($tkt, $GROUP, $USER);
+debug sprintf ("Assigning tkt to %s", $GROUP || '*none*');
+my @return = $SNOW->tkt_assign ($tkt, $GROUP);
 
 if    (scalar @return > 1) { die "too many matches after update\n" }
 elsif (scalar @return < 1) { die "failed to reassign: no matches found\n" }
@@ -143,22 +141,60 @@ exit 0;
 
 =head1 OPTIONS
 
+=head2 REQUIRED FIELDS
+
 =over 4
 
-=item I<TICKET_NUMBER>
+=item (STDIN)
 
-ID of a ticket number to update.  You can leave off the F<INC0+> values.
-
-=item B<--config> I<CONFIG>
-
-=item B<--debug>
-
-Print debugging information on STDERR.
+The text of the message description comes on STDIN.
 
 =item B<--group> I<GROUP>
 
 Assign the ticket to group I<GROUP>.  No default; if we don't get a value, we
 won't set the assignment_group value.
+
+=item B<--subject> I<TEXT>
+
+Corresponds to the I<short_description> field.
+
+ID of a ticket number to update.  You can leave off the F<INC0+> values.
+
+=item B<--ticket> I<YAML>
+
+The default ticket fields come from a local YAML file, which looks something
+like this:
+
+    ticket:
+        assignment_group:       'ECF-CIS'
+        group:                  'ECF-CIS'
+        impact:                 '4'
+        short_description:      '(no subject)'
+        u_categorization:       'Hardware -- Server -- Linux'
+        u_item:                 'Linux'
+        u_operational_category: 'Break/Fix'
+        u_page_primary:         '0'
+        u_reported_source:      'Event Monitoring'
+        urgency:                '4'
+        u_service:              'Scientific Services'
+        u_service_type:         'Server'
+
+Required.
+
+=back
+
+=head2 OTHER FIELDS
+
+=over4 
+
+=item B<--config> I<CONFIG>
+
+Configuration file, instead of F</etc/snow/config.yaml>.
+
+=item B<--debug>
+
+Print debugging information on STDERR.
+
 
 =item B<--user> I<USER>
 
@@ -178,6 +214,11 @@ Prints out the full help documentation and exits.
 =head1 REQUIREMENTS
 
 B<FNAL::SNOW>
+
+=head1 EXAMPLE
+
+    echo "testing" | snow-ritm-create --ticket template.yaml \
+        --subject testing --group ECF-CIS
 
 =head1 AUTHOR
 

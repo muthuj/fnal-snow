@@ -6,7 +6,7 @@ FNAL::SNOW::Ticket::Incident - Service Now Incidents
 
 =head1 SYNOPSIS
 
-  [...]
+  use FNAL::SNOW::Ticket::Incident;
 
 =head1 DESCRIPTION
 
@@ -41,6 +41,40 @@ our @ISA = qw/FNAL::SNOW::Ticket/;
 
 =over 4
 
+=item build_filter_extra (I<ARGHASH>)
+
+Adds additional search filters for building queries.  We currently support:
+
+   subtype        open        incident_state < 4
+                  closed      incident_state >= 4
+                  unresolved  incident_state < 7
+                  other       (no filter)
+
+=cut
+
+sub build_filter_extra {
+    my ($self, %args) = @_;
+
+    my $type = $self->type_short;
+    my $subtype = $args{'subtype'} || "";
+
+    my ($text, @extra);
+    if      (lc $subtype eq 'open') {
+        $text  = "Open ${type}s";
+        push @extra, "incident_state<4";
+    } elsif (lc $subtype eq 'closed') {
+        $text = "Closed ${type}s";
+        push @extra, 'incident_state>=4';
+    } elsif (lc $subtype eq 'unresolved') {
+        $text = "Unresolved ${type}s";
+        push @extra, 'incident_state<7';
+    } elsif (defined ($subtype)) {
+        $text = "All ${type}s"
+    }
+
+    return ($text, @extra);
+}
+
 =item is_resolved (TICKET)
 
 Returns 1 if the ticket is resolved, 0 otherwise.  In the case of Incidents,
@@ -48,7 +82,7 @@ this means "the state is >= 4", which is fairly anachronistic.
 
 =cut
 
-sub is_resolved { 
+sub is_resolved {
     my ($self, $tkt) = @_;
     return $self->_state($tkt) >= 4 ? 1 : 0
 }
@@ -112,10 +146,6 @@ See B<FNAL::SNOW::Ticket> (may not be necessary)
 =back
 
 =cut
-
-##############################################################################
-### Internal Subroutines #####################################################
-##############################################################################
 
 ##############################################################################
 ### Final Documentation ######################################################

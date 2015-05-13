@@ -95,5 +95,8 @@ ritm-reopen:
 #########################################################################
 
 request-new:
-	@echo "Testing" | /usr/bin/snow-ticket-create --subject testing \
+	@echo "Testing" | /usr/bin/snow-request-create --subject testing \
 		--type request --group ECF-CIS --ticket new-cis-request.yaml --debug
+	
+request:
+	@ ../usr/bin/snow-ticket $(REQ) --debug

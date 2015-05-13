@@ -1,7 +1,48 @@
 ## This ticket is a good start for creating tickets for the CIS team.
 
 ticket:
-    assignment_group:       'ECF-CIS'
-    group:                  'ECF-CIS'
-    short_description:      '(no subject)'
-    dv_request:             'REQ000000230459'
+    # assignment_group:       'ECF-CIS'
+    # group:                  'ECF-CIS'
+    # short_description:      '(no subject)'
+    # request:                'db2e945c6f808200c6df5d412e3ee411'
+    # u_categorization:       '1ea684156fb625005232ce026e3ee44a'
+    # u_family:               '26bde9d264126c8092f96f3b97658b28'
+    # u_reported_source:      'Direct Input'
+    # urgency:                '3'
+    # impact:                 '3'
+    # cat_item:
+
+    active:                             1
+    approval:                          approved
+    # assigned_to:                       b257d72b98327c404478f9749d9cf2c3
+    # assignment_group:                  d895b1d86f54610032544d1fde3ee448
+    cat_item:                          df6a9c3ae002184092f9954a12d5a9be
+    contact_type:                      phone
+    context:                           143e1cdc6f808200c6df5d412e3ee445
+    due_date:                          2015-05-12 06:19:33
+    impact:                            3
+    made_sla:                          1
+    # number:                            RITM0208204
+    # opened_at:                         2015-05-11 14:19:34
+    # opened_by:                         b257d72b98327c404478f9749d9cf2c3
+    priority:                          3
+    quantity:                          1
+    # reassignment_count:                3
+    request:                           db2e945c6f808200c6df5d412e3ee411
+    service_offering:                  6f5744d16fb625005232ce026e3ee43c
+    short_description:                 lala
+    stage:                             Pending
+    # sys_class_name:                    sc_req_item
+    # sys_created_by:                    tskirvin
+    # sys_created_on:                    2015-05-11 14:19:34
+    # sys_domain:                        global
+    # sys_id:                            1f2e945c6f808200c6df5d412e3ee411
+    # sys_mod_count:                     23
+    # sys_updated_by                     cd-srv-cms-snow
+    # sys_updated_on                     2015-05-12 21:16:04
+    u_categorization:                  1ea684156fb625005232ce026e3ee44a
+    u_family:                          26bde9d264126c8092f96f3b97658b28
+    u_reported_source:                 Direct Input
+    upon_approval:                     proceed
+    upon_reject:                       cancel
+    urgency:                           3

@@ -6,13 +6,17 @@ FNAL::SNOW::Ticket - template for various SNOW ticket types
 
 =head1 SYNOPSIS
 
-  [...]
+  use FNAL::SNOW::Ticket;
 
 =head1 DESCRIPTION
 
 FNAL::SNOW::Ticket is a top-level template for interacting with different
 Service Now (SNOW) ticket types - incidents, requested items, tasks, etc.  It
 provides central functionality that is used by its various sub-classes.
+
+All of the sub-classes of FNAL::SNOW::Ticket - ::Incident, ::RITM, etc -
+include all of the main functions.  They can override the functions if
+necessary, but this module provides basic functionality.
 
 =cut
 
@@ -60,6 +64,8 @@ use vars qw/%GROUPCACHE %USERCACHE %NAMECACHE/;
 
 =item debug
 
+Is debugging turned on upstream?  True/false.
+
 =cut
 
 sub debug { $_[0]->connection->debug }
@@ -91,15 +97,12 @@ Generates the text and "__encoded_query" search terms associated with ticket
 searches.  We currently support:
 
    submit_before  (INT)       opened_at < YYYY-MM-DD HH:MM:SS
-   subtype        open        incident_state < 4
-                  closed      incident_state >= 4
-                  unresolved  incident_state < 7
-                  other       (no filter)
    unassigned     (true)      assigned_to=NULL
 
-Returns two strings: the EXTRA query and the TEXT associated with the search.
+Additionally, we call B<build_filter_extra()> first, so that each sub-class can
+implement its own additional filters.
 
-(Note: the subtype bits may not work for RITMs yet.)
+Returns two strings: the EXTRA query and the TEXT associated with the search.
 
 =cut
 
@@ -107,30 +110,11 @@ sub build_filter {
     my ($self, %args) = @_;
 
     my $submit_before = $args{'submit_before'} || '';
-    my $subtype       = $args{'subtype'}       || '';
     my $unassigned    = $args{'unassigned'}    || 0;
 
     my $type = $self->type_short;
 
-    my ($text, $extra);
-
-    my @extra;
-    if      (lc $subtype eq 'open') {
-        $text  = "Open ${type}s";
-        push @extra, "incident_state<4";
-        push @extra, "stage!=complete";
-        push @extra, "stage!=Request Cancelled";
-    } elsif (lc $subtype eq 'closed') {
-        $text = "Closed ${type}s";
-        push @extra, 'incident_state>=4';
-        push @extra, "stage=Request Cancelled";
-    } elsif (lc $subtype eq 'unresolved') {
-        $text = "Unresolved ${type}s";
-        push @extra, 'incident_state<7';
-        push @extra, "stage!=complete";
-    } elsif (defined ($subtype)) {
-        $text = "All ${type}s"
-    }
+    my ($text, @extra) = $self->build_filter_extra(%args);
 
     if ($unassigned) {
         $text = "Unassigned $text";
@@ -139,12 +123,21 @@ sub build_filter {
 
     if ($submit_before) {
         my $time = strftime ("%Y-%m-%d %H:%M:%S %Z", localtime ($submit_before));
-        push @extra, "opened_at<$time";
         $text  = "$text submitted before $time";
+        push @extra, "opened_at<$time";
     }
     return (join ('^', @extra), $text);
 
 }
+
+=item build_filter_extra (I<ARGHASH>)
+
+Takes the same argument hash as B<build_filter()>, but can be overridden by
+other functions.
+
+=cut
+
+sub build_filter_extra { "", () }
 
 =item create (TABLE, PARAMS)
 
@@ -173,32 +166,6 @@ B<FNAL::SNOW::Query> objects, one for each matching entry.
 =cut
 
 sub query { shift->connection->query (@_) }
-
-=item update (TABLE, QUERY, UPDATE)
-
-Updates Service Now objects in table I<TABLE> matching parameters from the
-hashref I<QUERY>.  I<UPDATE> is a hashref containing updates.  Returns an
-array of updated entries.
-
-=cut
-
-sub update_old {
-    my ($self, $table, $query, $update) = @_;
-    my $glide = ServiceNow::GlideRecord->new ($self->snconf, $table);
-    $glide->query ($query);
-
-    my @return;
-    while ($glide->next()) {
-        foreach (keys %$update) {
-            $glide->setValue ($_, $$update{$_});
-        }
-        $glide->update();
-        my %record = $glide->getRecord();
-        push @return, \%record;
-    }
-
-    return @return;
-}
 
 =back
 
@@ -247,18 +214,6 @@ sub list_by_type {
     return @entries;
 }
 
-=item tkt_list_by_assignee (I<TYPE>, I<EXTRA>)
-
-Queries for incidents assigned to the user I<NAME>.  Returns an array of
-matching entries.
-
-=cut
-
-sub tkt_list_by_assignee {
-    my ($self, $type, $user, $extra) = @_;
-    $self->tkt_list_by_type ($type, { 'assigned_to' => $user }, $extra )
-}
-
 =item parse_ticket_number (NUMBER)
 
 Standardizes an incident number into the 15-character string starting with
@@ -287,6 +242,10 @@ sub parse_ticket_number {
 
 =item type, type_pretty, type_short
 
+These informational functions provide the table name, a pretty version of the
+table name, and a short version of the table name.  They should be overridden
+by sub-classes.  Default for all is 'unknown'.
+
 =cut
 
 sub type        { 'unknown' }
@@ -309,6 +268,37 @@ an array of lines suitable for printing, or (in a scalar syntax) a single
 string with built-in newlines.
 
 =over 4
+
+
+=cut
+
+##############################################################################
+### Generic Ticket Actions ###################################################
+##############################################################################
+
+=head2 Generic Ticket Actions
+
+These require an active connection to SNOW.  These should ideally work against 
+incidents, tasks, requests, etc.
+
+=over 4
+
+=item create (TYPE, TKTHASH)
+
+Creates a new ticket of type I<TYPE>, and returns the number of the created
+ticket (or undef on failure).
+
+=cut
+
+sub create { return 'unsupported' }
+
+=item is_resolved (CODE)
+
+Returns 1 if the ticket is resolved, 0 otherwise.
+
+=cut
+
+sub is_resolved { warn "is_resolved: unsupported\n"; return 0 }
 
 =item list (TEXT, TICKETLIST)
 
@@ -339,44 +329,9 @@ sub list {
     wantarray ? @return : join ("\n", @return, '');
 }
 
-=back
-
-=cut
-
-##############################################################################
-### Generic Ticket Actions ###################################################
-##############################################################################
-
-=head2 Generic Ticket Actions
-
-These require an active connection to SNOW.  These should ideally work against 
-incidents, tasks, requests, etc.
-
-=over 4
-
-=item create (
-
-Creates a new ticket of type I<TYPE>, and returns the number of the created
-ticket (or undef on failure).
-
-=cut
-
-sub create {
-    my ($self, $type, %ticket) = @_;
-    my @items = $self->create ($type, \%ticket);
-    return undef unless (@items && scalar @items == 1);
-    return $items[0]->{number};
-}
-
-=item is_resolved (CODE)
-
-Returns 1 if the ticket is resolved, 0 otherwise.
-
-=cut
-
-sub is_resolved { warn "is_resolved: unsupported\n"; return 0 }
-
 =item reopen
+
+Reopen a ticket.  Not supported by default.
 
 =cut
 
@@ -384,11 +339,13 @@ sub reopen { return 'unsupported' }
 
 =item resolve ( CODE, ARGUMENT_HASH )
 
+Resolve a ticket.  Not supported by default.
+
 =cut
 
 sub resolve { 'unsupported' }
 
-=item search (TYPE, SEARCH, EXTRA)
+=item search (SEARCH, EXTRA)
 
 Search for a ticket.
 
@@ -461,7 +418,6 @@ sub string_assignee {
     );
     return wantarray ? @return : join ("\n", @return, '');
 }
-
 
 =item string_base (TICKET)
 
@@ -701,6 +657,12 @@ These are wrappers around the main functions in B<FNAL::SNOW>.
 
 sub user_by_name { shift->connection->user_by_name (@_) }
 
+=item user_by_sysid (I<ID>)
+
+=cut
+
+sub user_by_sysid { shift->connection->user_by_sysid (@_) }
+
 =item user_by_username (I<NAME>)
 
 =cut
@@ -788,7 +750,7 @@ sub _format_text_field {
 
 sub _incident_shorten {
     my ($inc) = @_;
-    $inc =~ s/^(INC|RITM|TASK|TKT)0+/$1/;
+    $inc =~ s/^(INC|RITM|TASK|TKT|REQ)0+/$1/;
     return $inc;
 }
 
@@ -837,7 +799,7 @@ sub _resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }
 sub _resolved_code   { $_[1]{'close_code'}           || '(none)'    }
 sub _resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
 sub _sys_created_by  { $_[1]{'dv_sys_created_by'}    || '(none)'    }
-sub _stage           { $_[1]{'stage'}                || ''          }
+sub _stage           { $_[1]{'dv_stage'}  || $_[1]{'stage'} || ''   }
 sub _state           { $_[1]{'incident_state'}       || 0           }
 sub _status          { $_[1]{'dv_incident_state'}    || '' }
 sub _summary         { $_[1]{'dv_short_description'} || '(none)'    }

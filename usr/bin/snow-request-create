@@ -2,18 +2,17 @@
 
 =head1 NAME
 
-snow-ritm - resolves a Service Now ticket
+snow-request-create - create a Service Now request
 
 =head1 SYNOPSIS
 
-B<snow-ritm> F<INCIDENT_NUMBER> F<TEXT>
+echo "test" | B<snow-request-create> --subject 'testing' --group ECF-CIS
 
-B<snow-ritm> --man
+B<snow-request-create> --man
 
 =head1 DESCRIPTION
 
-snow-ritm resolves a specified Incident number.  The updated
-Incident information is then printed to STDOUT.
+snow-request-create creates and assigns a new Incident.
 
 =cut
 
@@ -21,15 +20,13 @@ Incident information is then printed to STDOUT.
 ### Configuration ############################################################
 ##############################################################################
 
-use lib "/home/tskirvin/work/rpm/fnal-snow/lib";
-
-# these should move
 our $CONFIG_FILE = '/etc/snow/config.yaml';
 
 our $DEBUG = 0;
+our $TYPE = 'request';
 our $USER  = $ENV{'REMOTE_USER'} || $ENV{'USER'} || getpwuid ($>);
-our $CODE  = 'Fulfillment';
-our $STDIN = 0;
+
+use vars qw/$USER $GROUP $SUBJECT $TICKET_FILE/;
 
 ##############################################################################
 ### Declarations #############################################################
@@ -41,6 +38,7 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 use FNAL::SNOW;
+use YAML::Syck;
 
 $|++;
 
@@ -55,9 +53,25 @@ sub error_usage {
     pod2usage (-msg => $error, -exit_status => 2, -verbose => 1);
 }
 
+### load_yaml (FILE)
+# Load a configuration file from YAML
+sub load_yaml {
+    my ($file) = @_;
+    my $yaml = YAML::Syck::LoadFile ($file);
+    unless ($yaml) { die "could not open $file: $@\n" }
+    return $yaml;
+}
+
 ### debug (MSG)
 # Print a debugging message if $DEBUG is set.
 sub debug { if ($DEBUG) { warn "@_\n" } }
+
+### set_ticket (FIELD, VALUE)
+# Updates value of the ticket
+sub set_ticket { 
+    my ($ticket, $field, $value) = @_;
+    $ticket->{'ticket'}->{$field} = $value;
+}
 
 ##############################################################################
 ### main () ##################################################################
@@ -67,19 +81,15 @@ my $parser = Getopt::Long::Parser->new();
 my $result = $parser->getoptions (
     'd|debug'    => \$DEBUG,
     'c|config=s' => \$CONFIG_FILE,
+    't|ticket=s' => \$TICKET_FILE,
     'u|user=s'   => \$USER,
-    'code=s'     => \$CODE,
-    'stdin'      => \$STDIN,
+    'subject=s'  => \$SUBJECT,
     'man'        => sub { pod2usage (-verbose => 2, -noperldoc => 1) },
     'h|help'     => sub { pod2usage (-verbose => 1) }) || error_usage ();
 
-my ($tktnum, @rest) = @ARGV;
-error_usage ("no tkt listed") unless ($tktnum);
+my $TICKET = load_yaml ($TICKET_FILE);
 
-my $text = join (' ', @rest);
-if ($STDIN) { $text = join ("\n", $text, <STDIN>) }
-
-error_usage ('no text provided') if $text eq '';
+# set_ticket ($TICKET, 'u_request_description', $SUBJECT);
 
 debug "Creating FNAL::SNOW object: $CONFIG_FILE";
 my $SNOW = FNAL::SNOW->init ('config_file' => $CONFIG_FILE, 'debug' => $DEBUG);
@@ -88,55 +98,26 @@ my $CONFIG = $SNOW->config_hash;
 debug "Connecting to ServiceNow at $CONFIG->{servicenow}->{url}";
 $SNOW->connect or die "could not connect to SN\n";
 
-debug "Looking up ticket '$tktnum'";
+debug "Looking up user '$USER'";
+my $u = $SNOW->user_by_username ($USER);
+unless ($u) { die "invalid user: $USER\n" }
+my $uid = $u->{'sys_id'};
+# set_ticket ($TICKET, 'requested_for', $uid);
+
+debug ("creating a new entry in Service Now");
+my $tktnum = $SNOW->tkt_create ($TYPE, %{$TICKET->{ticket}});
+die "unable to create ticket\n" unless $tktnum;
+
+debug "Looking up tkt '$tktnum'";
 my @tkt = $SNOW->tkt_by_number ($tktnum);
-unless (@tkt) { die "unable to load ticket: '$tktnum'\n"; }
+unless (@tkt) { die "unable to load tkt: '$tktnum'\n"; }
 unless (scalar @tkt == 1) {
-    die "too many matches for ticket '$tktnum'\n";
+    die "too many matches for tkt '$tktnum'\n";
 }
 my $tkt = $tkt[0];
 
-if ($SNOW->tkt_is_resolved ($tkt)) {
-    print "tkt is already resolved: '$tktnum'\n";
-    print scalar $SNOW->tkt_string_resolution ($tkt);
-    exit 1;
-}
-
-## state 20 == "waiting for approval" or "request_approved"
-
-debug "Closing ticket";
-my $STATE = 'Closed';
-my %update = (
-    'text' => $text, 'dv_approval_set' => 1,
-    'u_util_state' => $STATE, 'state' => $STATE,
-    'user' => $USER );
-my @return = $SNOW->tkt_resolve ($$tkt{'number'}, %update);
- #   'text' => $text, 'close_code' => $CODE,
- #   'user' => $USER );
-
-my $return = 0;
-if (scalar @return > 1) {
-    print "too many matches after update\n";
-    $return = 2;
-} elsif (scalar @return < 1) {
-    print "failed to reassign: no matches found on update()\n";
-    $return = 3;
-}
-
-foreach my $ret (@return) {
-    if (ref $ret && $ret->{number} eq $tkt->{number}) {
-        print scalar $SNOW->tkt_string_base ($SNOW->tkt_by_number($tktnum));
-    } elsif (ref $ret) {
-        print "returned object did not match our original ticket number";
-        print scalar $SNOW->tkt_string_base ($ret);
-        $return = 1;
-    } else {
-        print "error: $ret\n";
-        $return = 1;
-    }
-}
-
-exit $return;
+print scalar $SNOW->tkt_string_short ($SNOW->tkt_by_number ($tktnum));
+exit 0;
 
 ##############################################################################
 ### Final Documentation ######################################################
@@ -144,29 +125,60 @@ exit $return;
 
 =head1 OPTIONS
 
+=head2 REQUIRED FIELDS
+
 =over 4
 
-=item I<INCIDENT_NUMBER>
+=item (STDIN)
 
-ID of an tkt number to update.  You can leave off the F<INC0+> values.
+The text of the message description comes on STDIN.
 
-=item I<TEXT>
+=item B<--subject> I<TEXT>
 
-Text to enter into the journal entry.
+Corresponds to the I<short_description> field.
+
+ID of a ticket number to update.  You can leave off the F<INC0+> values.
+
+=item B<--ticket> I<YAML>
+
+The default ticket fields come from a local YAML file, which looks something
+like this:
+
+    ticket:
+        assignment_group:       'ECF-CIS'
+        group:                  'ECF-CIS'
+        impact:                 '4'
+        short_description:      '(no subject)'
+        u_categorization:       'Hardware -- Server -- Linux'
+        u_item:                 'Linux'
+        u_operational_category: 'Break/Fix'
+        u_page_primary:         '0'
+        u_reported_source:      'Event Monitoring'
+        urgency:                '4'
+        u_service:              'Scientific Services'
+        u_service_type:         'Server'
+
+Required.
+
+=back
+
+=head2 OTHER FIELDS
+
+=over4 
 
 =item B<--config> I<CONFIG>
+
+Configuration file, instead of F</etc/snow/config.yaml>.
 
 =item B<--debug>
 
 Print debugging information on STDERR.
 
-=item B<--stdin>
-
-If set, take additional text for the journal entry from STDIN.
 
 =item B<--user> I<USER>
 
-The user listed in the submitted text; defaults to $ENV{'USER'} or the running uid.
+Assign the ticket to user I<USER>.  No default; if we don't get a value, we
+won't update the assigned_to value.
 
 =item B<--help>
 
@@ -182,9 +194,10 @@ Prints out the full help documentation and exits.
 
 B<FNAL::SNOW>
 
-=head1 EXAMPLES
+=head1 EXAMPLE
 
-    snow-ritm 389936 "testing"
+    echo "testing" | snow-request-create --ticket template.yaml \
+        --subject testing --group ECF-CIS
 
 =head1 AUTHOR
 
@@ -192,7 +205,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2015, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.

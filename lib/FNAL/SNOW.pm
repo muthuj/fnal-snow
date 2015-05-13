@@ -43,6 +43,7 @@ our %TICKET_TYPES = (
     'request'     => 'FNAL::SNOW::Ticket::Request',
     'ritm'        => 'FNAL::SNOW::Ticket::RITM',
     'sc_req_item' => 'FNAL::SNOW::Ticket::RITM',
+    'sc_request'  => 'FNAL::SNOW::Ticket::Request',
     'task'        => 'FNAL::SNOW::Ticket::Task',
     'ticket'      => 'FNAL::SNOW::Ticket::Incident',
 );
@@ -57,7 +58,6 @@ use warnings;
 use Class::Struct;
 use Data::Dumper;
 use FNAL::SNOW::Config;
-use MIME::Lite;
 use ServiceNow;
 use ServiceNow::Configuration;
 
@@ -819,7 +819,7 @@ sub users_by_groupname {
         { 'group' => $name })) {
         my $entry = $e->result;
         my $id = $$entry{'user'};
-        foreach ($self->query ('sys_user', { 'sys_id' => $id })) {
+        foreach ($self->user_by_sysid ($id)) { 
             push @entries, $_->result;
         }
     }
@@ -835,6 +835,7 @@ hashref.
 
 sub user_by_name {
     my ($self, $name) = @_;
+    return unless $name;
     if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
     my @users = $self->query ('sys_user', { 'name' => $name });
     return undef unless (scalar @users == 1);
@@ -886,8 +887,8 @@ sub user_in_group {
         { 'group' => $group })) {
         my $entry = $e->result;
         my $id = $$entry{'user'};
-        foreach ($self->query ('sys_user', { 'sys_id' => $id })) {
-            return 1 if $_->result->{dv_user_name} eq $username
+        foreach ($self->user_by_sysid ($id)) {
+            return 1 if $_->{dv_user_name} eq $username
         }
     }
     return 0;

@@ -6,7 +6,7 @@ FNAL::SNOW::RITM - work with SNOW Requested Items (RITMs)
 
 =head1 SYNOPSIS
 
-  [...]
+  use FNAL::SNOW::RITM;
 
 =head1 DESCRIPTION
 
@@ -55,7 +55,7 @@ updated Incident hashrefs (hopefully just one!).
 
 =cut
 
-sub assign {
+sub assign_bad {
     my ($self, $group, $user) = @_;
 
     my %update = ();
@@ -64,8 +64,6 @@ sub assign {
 
     return $self->update (%update);
 }
-
-### TODO: better build_filter for RITMs
 
 =item list_by_type (I<TYPE>, I<SEARCH>, I<EXTRA>)
 
@@ -103,8 +101,6 @@ sub list_by_assignee {
 
 =head2 Generic Ticket Actions
 
-These should ideally work against incidents, tasks, requests, etc.
-
 =over 4
 
 =item by_number
@@ -138,15 +134,57 @@ sub create {
     return $items[0]->{number};
 }
 
-=item is_resolved (TICKETHASH)
+=item build_filter_extra (ARGHASH)
 
-Returns 1 if the ticket is resolved, 0 otherwise.
+Adds additional search filters for building queries.  We currently support:
 
-NOT WORKING
+    subtype     open        stage != complete, stage != Request Cancelled
+                closed      stage = complete
+                cancelled   stage = Request Cancelled
+                (other)     (no filter)
 
 =cut
 
-sub is_resolved { return _state (@_) >= 4 ? 1 : 0 }
+sub build_filter_extra {
+    my ($self, %args) = @_;
+
+    my $type = $self->type_short;
+    my $subtype = $args{'subtype'} || "";
+
+    my ($text, @extra);
+    if      (lc $subtype eq 'open' || lc $subtype eq 'unresolved') {
+        $text  = "Open ${type}s";
+        push @extra, "stage!=complete";
+        push @extra, "stage!=Request Cancelled";
+    } elsif (lc $subtype eq 'closed') {
+        $text = "Completed ${type}s";
+        push @extra, "stage=complete";
+    } elsif (lc $subtype eq 'cancelled') {
+        $text = "Cancelled ${type}s";
+        push @extra, "stage=Request Cancelled";
+    } elsif (defined ($subtype)) {
+        $text = "All ${type}s"
+    }
+
+    return ($text, @extra);
+}
+
+=item is_resolved (TICKETHASH)
+
+Returns 1 if the ticket is in stage 'complete' or 'Request Cancelled', 0
+otherwise.
+
+=cut
+
+sub is_resolved {
+    my ($self, $tkt) = @_;
+    my $stage = $self->_stage ($tkt);
+    return 'unknown' if $stage eq '';
+    return 1 if $stage eq 'complete';
+    return 1 if $stage eq 'Closed Complete';
+    return 1 if $stage eq 'Request Cancelled';
+    return 0;
+}
 
 =item reopen
 
@@ -154,18 +192,16 @@ Update the ticket to set the incident_state back to 'Work In Progress',
 and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>,
 and I<resolved_by>.
 
-Uses B<update()>.
-
 =cut
 
 sub reopen {
     my ($self, $code, %args) = @_;
     my %update = (
-        'incident_state' => 2,      # 'Work In Progress'
-        'close_notes'    => 0,
-        'close_code'     => 0,
-        'resolved_at'    => 0,
-        'resolved_by'    => 0,
+        'state' => 'Work in Progress',
+        'stage' => 'Pending',
+        'close_notes' => 0,
+        'closed_at'   => 0,
+        'closed_by'   => 0,
     );
     return $self->update ($code, %update);
 }
@@ -187,24 +223,19 @@ Uses B<update()>.
 sub resolve {
     my ($self, $code, %args) = @_;
     my %update = (
-        'incident_state' => 6,      # 'Resolved'
-        'close_notes'    => $args{'text'},
-        'close_code'     => $args{'close_code'},
-        'resolved_by'    => $args{'user'},
+        'stage'       => 'Closed Complete',
+        'state'       => 'Closed',
+        'close_notes' => $args{'text'},
+        'closed_by'   => $args{'user'},
     );
+    if      (lc $args{'close_code'} eq 'complete') { 
+        $update{'stage'} = 'Closed Complete';
+    } elsif (lc $args{'close_code'} eq 'cancelled') { 
+        $update{'stage'} = 'Cancelled';
+    } else {
+        $update{'stage'} = 'Closed Complete';
+    }
     return $self->update ($code, %update);
-}
-
-=item update (CODE, ARGUMENTS)
-
-Update the ticket, incident, or task associated with the string I<CODE>.
-Uses B<update()>, with a hash made of I<ARGUMENTS>.
-
-=cut
-
-sub update {
-    my ($self, $code, %args) = @_;
-    return SUPER::update ($self, $self->type, { 'number' => $code }, \%args);
 }
 
 =back
@@ -249,6 +280,20 @@ sub string_assignee {
     return wantarray ? @return : join ("\n", @return, '');
 }
 
+=item string_description (TICKET)
+
+Generates a report showing the user-provided description.
+
+=cut
+
+sub string_description {
+    my ($self, $tkt) = @_;
+    my @return = "User-Provided Description";
+    push @return, $self->_format_text ({'prefix' => '  '},
+            $self->_description ($tkt));
+    return wantarray ? @return : join ("\n", @return, '');
+}
+
 =item string_primary (TICKET)
 
 Generates a report on the "primary" information for a ticket - number, text
@@ -263,7 +308,8 @@ sub string_primary {
         {'minwidth' => 20, 'prefix' => '  '},
         'Number'        => $self->_number  ($tkt),
         'Summary'       => $self->_summary ($tkt),
-        'Status'        => $self->_status  ($tkt),
+        'State'         => $self->_status  ($tkt),
+        'Stage'         => $self->_stage   ($tkt),
         'Approval'      => $self->_approval ($tkt),
         'Submitted'     => $self->_format_date ($self->_date_submit($tkt)),
         'Urgency'       => $self->_urgency ($tkt),
@@ -304,9 +350,14 @@ Generates a report showing the resolution status.
 sub string_resolution {
     my ($self, $tkt) = @_;
     my @return = "Resolution";
+
+    my $resolver = $self->connection->user_by_sysid (
+        $self->_resolved_by($tkt)
+    );
+
     push @return, $self->_format_text_field (
         {'minwidth' => 20, 'prefix' => '  '},
-        'Resolved By' => $self->_resolved_by ($tkt),
+        'Resolved By' => $$resolver{'dv_name'},
         'Date'        => $self->_format_date ($self->_date_resolved($tkt)),
         'Close Code'  => $self->_resolved_code ($tkt)
     );
@@ -366,9 +417,8 @@ sub summary {
         my $request     = $createdby->{'dv_user_name'} || '*unknown*';
         my $assign      = $assignedto->{'dv_user_name'} || '*unassigned*';
         my $group       = $self->_assigned_group ($tkt);
-        my $status      = $self->_status ($tkt)
-                            || $self->_itil_state ($tkt)
-                            || $self->_stage ($tkt);
+        my $status      = $self->_stage ($tkt)
+                            || $self->_itil_state ($tkt);
         my $created     = $self->_format_date ($self->_date_submit ($tkt));
         my $updated     = $self->_format_date ($self->_date_update ($tkt));
         my $description = $self->_summary ($tkt);
@@ -411,15 +461,17 @@ sub _caller_id       { $_[1]{'dv_caller_id'} || $_[1]{'caller_id'} || '' }
 sub _date_resolved   { $_[1]{'dv_resolved_at'}       || ''          }
 sub _date_submit     { $_[1]{'dv_opened_at'}         || ''          }
 sub _date_update     { $_[1]{'dv_sys_updated_on'}    || ''          }
-sub _description     { $_[1]{'description'}          || ''          }
+sub _description     { $_[1]{'dv_close_notes'}       || ''          }
 sub _itil_state      { $_[1]{'u_itil_state'}         || ''          }
 sub _number          { $_[1]{'number'}               || '(none)'    }
 sub _opened_by       { $_[1]{'dv_opened_by'}         || '(unknown)' }
 sub _priority        { $_[1]{'dv_priority'}          || '(unknown)' }
 sub _requestor       { $_[1]{'dv_sys_created_by'}    || '(unknown)' }
-sub _resolved_by     { $_[1]{'dv_resolved_by'}       || '(none)'    }
-sub _resolved_code   { $_[1]{'close_code'}           || '(none)'    }
+
+sub _resolved_by     { $_[1]{'closed_by'}            || ''    }
+sub _resolved_time   { $_[1]{'closed_at'}            || '' }
 sub _resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
+
 sub _stage           { $_[1]{'stage'}                || ''          }
 sub _state           { $_[1]{'incident_state'}       || 0           }
 sub _status          { $_[1]{'dv_u_itil_state'}       || '' }
