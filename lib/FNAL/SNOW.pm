@@ -1,5 +1,5 @@
 package FNAL::SNOW;
-our $VERSION = "1.02";
+our $VERSION = "1.03";
 
 =head1 NAME
 
@@ -260,6 +260,13 @@ sub tkt_list_by_type {
     my ($self, $type, $search, $extra) = @_;
     $type = $self->_tkt_type ($type);
     if ($extra) { $$search{'__encoded_query'} = $extra }
+    if ($self->debug) {
+        print "  search criteria:\n";
+        foreach my $key (sort keys %{$search}) { 
+            print "    $key: $$search{$key}\n";
+        }
+        print "  type: $type\n";
+    }
     my @entries = $self->query($type, $search);
     return @entries;
 }
@@ -472,8 +479,8 @@ sub tkt_is_resolved { return _tkt_state (@_) >= 4 ? 1 : 0 }
 
 =item tkt_reopen
 
-Update the ticket to set the incident_state back to 'Work In Progress', 
-and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>, 
+Update the ticket to set the state back to 'Work In Progress',
+and (attempts to) clear I<close_code>, I<close_notes>, I<resolved_at>,
 and I<resolved_by>.
 
 Uses B<tkt_update()>.
@@ -494,7 +501,7 @@ sub tkt_reopen {
 
 =item tkt_resolve ( CODE, ARGUMENT_HASH )
 
-Updates the ticket to status 'resolved', as well as the following fields 
+Updates the ticket to status 'resolved', as well as the following fields
 based on I<ARGUMENT_HASH>:
 
    close_code       The resolution code (which can be anything, but FNAL has
@@ -560,7 +567,7 @@ These should ideally work against incidents, tasks, requests, etc.
 
 =item tkt_list (TEXT, TICKETLIST)
 
-Given a list of ticket objects, sorts them by number, pushes them all 
+Given a list of ticket objects, sorts them by number, pushes them all
 through B<tkt_summary()>, and combines the text into a single object.
 
 =cut
@@ -570,7 +577,7 @@ sub tkt_list {
     my @return;
     push @return, $text, '';
     foreach (sort { $a->{'number'} cmp $b->{'number'} } @list) {
-        push @return, ($self->tkt_summary ($_), '') 
+        push @return, ($self->tkt_summary ($_), '')
     }
     wantarray ? @return : join ("\n", @return, '');
 }
@@ -779,14 +786,14 @@ sub tkt_summary {
     foreach my $tkt (@tickets) {
         my $cid = $self->_tkt_caller_id ($tkt);
         my $createdby  = $self->user_by_name ($cid);
-        unless ($createdby) { 
+        unless ($createdby) {
             my $rid = $self->_tkt_requestor($tkt);
             $createdby = $self->user_by_username ($rid) || {};
         }
 
         my $assignedto = {};
         my $aid = $self->_tkt_assigned_person ($tkt);
-        if ($aid ne '(none)') { 
+        if ($aid ne '(none)') {
             $assignedto = $self->user_by_name ($aid);
         }
 
@@ -794,8 +801,8 @@ sub tkt_summary {
         my $request     = $createdby->{'dv_user_name'} || '*unknown*';
         my $assign      = $assignedto->{'dv_user_name'} || '*unassigned*';
         my $group       = $self->_tkt_assigned_group ($tkt);
-        my $status      = $self->_tkt_status ($tkt) 
-                            || $self->_tkt_itil_state ($tkt) 
+        my $status      = $self->_tkt_status ($tkt)
+                            || $self->_tkt_itil_state ($tkt)
                             || $self->_tkt_stage ($tkt);
         my $created     = $self->_format_date ($self->_tkt_date_submit ($tkt));
         my $updated     = $self->_format_date ($self->_tkt_date_update ($tkt));
@@ -885,13 +892,14 @@ hashref.
 
 =cut
 
-sub user_by_name { 
+sub user_by_name {
     my ($self, $name) = @_;
+    print "user_by_name: $name\n" if $self->debug;
     if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
     my @users = $self->query ('sys_user', { 'name' => $name });
     return undef unless (scalar @users == 1);
-    $USERCACHE{$name} = $users[0];
-    return $USERCACHE{$name};
+    $NAMECACHE{$name} = $users[0];
+    return $NAMECACHE{$name};
 }
 
 
@@ -902,8 +910,9 @@ hashref.
 
 =cut
 
-sub user_by_username { 
+sub user_by_username {
     my ($self, $username) = @_;
+    print "user_by_username: $username\n" if $self->debug;
     if (defined $USERCACHE{$username}) { return $USERCACHE{$username} }
     my @users = $self->query ('sys_user', { 'user_name' => $username });
     return undef unless (scalar @users == 1);
@@ -1105,7 +1114,7 @@ sub _tkt_urgency         { $_[1]{'dv_urgency'}           || '(unknown)' }
 #    submit_before  (INT)       opened_at < YYYY-MM-DD HH:MM:SS
 #    subtype        open        incident_state < 4
 #                   closed      incident_state >= 4
-#                   unresolved  incident_state < 7
+#                   unresolved  incident_state < 6
 #                   other       (no filter)
 #    unassigned     (true)      assigned_to=NULL
 #
@@ -1134,7 +1143,7 @@ sub _tkt_filter {
         push @extra, "stage=Request Cancelled";
     } elsif (lc $subtype eq 'unresolved') {
         $text = "Unresolved ${type}s";
-        push @extra, 'incident_state<7';
+        push @extra, 'incident_state<6';
         push @extra, "stage!=complete";
     } elsif (defined ($subtype)) {
         $text = "All ${type}s"
@@ -1191,7 +1200,7 @@ Tim Skirvin <tskirvin@fnal.gov>
 
 =head1 LICENSE
 
-Copyright 2014, Fermi National Accelerator Laboratory
+Copyright 2014-2016, Fermi National Accelerator Laboratory
 
 This program is free software; you may redistribute it and/or modify it under
 the same terms as Perl itself.
