@@ -262,7 +262,7 @@ sub tkt_list_by_type {
     if ($extra) { $$search{'__encoded_query'} = $extra }
     if ($self->debug) {
         print "  search criteria:\n";
-        foreach my $key (sort keys %{$search}) { 
+        foreach my $key (sort keys %{$search}) {
             print "    $key: $$search{$key}\n";
         }
         print "  type: $type\n";
@@ -296,6 +296,7 @@ Standardizes an incident number into the 15-character string starting with
 
 sub parse_ticket_number {
     my ($self, $num) = @_;
+    return $num if $num && $num =~ /^(PRJTASK)/ && length ($num) == 14;
     return $num if $num && $num =~ /^(INC|REQ)/ && length ($num) == 15;
     return $num if $num && $num =~ /^(TASK|RITM)/ && length ($num) == 11;
 
@@ -303,6 +304,8 @@ sub parse_ticket_number {
     if ($num =~ /^(INC|REQ)(\d+)$/) {
         $num = join ('', $1, ('0' x (15 - length ($num))), $2);
     } elsif ($num =~ /^(TASK|RITM)(\d+)$/) {
+        $num = join ('', $1, ('0' x (11 - length ($num))), $2);
+    } elsif ($num =~ /^(PRJTASK)(\d+)$/) {
         $num = join ('', $1, ('0' x (11 - length ($num))), $2);
     } elsif ($num =~ /^(\d+)/) {
         $num = join ('', 'INC', ('0' x (12 - length ($num))), $1);
@@ -1053,7 +1056,7 @@ sub _format_text_field {
 
 sub _incident_shorten {
     my ($inc) = @_;
-    $inc =~ s/^(INC|RITM|TASK|TKT)0+/$1/;
+    $inc =~ s/^(INC|RITM|TASK|TKT|PRJTASK)0+/$1/;
     return $inc;
 }
 
@@ -1170,6 +1173,7 @@ sub _tkt_type {
     if ($name =~ /^req/i)  { return 'sc_request'  }
     if ($name =~ /^ritm/i) { return 'sc_req_item' }
     if ($name =~ /^tas/i)  { return 'sc_task'     }
+    if ($name =~ /^prjtask/i) { return 'pm_project_task' }
     return $name;
 }
 
@@ -1181,6 +1185,7 @@ sub _tkt_type_by_number {
     if ($number =~ /^REQ/)  { return 'sc_request'  }
     if ($number =~ /^RITM/) { return 'sc_req_item' }
     if ($number =~ /^TASK/) { return 'sc_task'     }
+    if ($number =~ /^PRJTASK/) { return 'pm_project_task' }
     return;
 }
 

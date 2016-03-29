@@ -1,6 +1,6 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
-Version:        1.0.2
+Version:        1.0.3
 Release:        0%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
@@ -54,6 +54,9 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Mon Mar 28 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.3-0
+- added PRJTASK support (read-only)
+
 * Mon Mar 28 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.2-0
 - name caching works (should speed things up dramatically)
 - tweaked 'unresolved' standards to better match FNAL instance
