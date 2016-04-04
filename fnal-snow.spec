@@ -1,7 +1,7 @@
 Name:           fnal-snow
 Summary:        Scripts and libraries to interact with Service Now @ FNAL
-Version:        1.0.3
-Release:        0%{?dist}
+Version:        1.0.4
+Release:        1%{?dist}
 Packager:       Tim Skirvin <tskirvin@fnal.gov>
 Group:          Applications/System
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
@@ -21,7 +21,7 @@ Now interface.
 
 %prep
 
-%setup -c -n %{name}-%{version}-%{release}
+%setup -c -q -n %{name}-%{version}-%{release}
 
 %build
 
@@ -54,8 +54,15 @@ pod2man --section 3 --center="Perl Documentation" lib/FNAL/SNOW/Config.pm \
 /usr/share/perl5/vendor_perl/FNAL/*
 
 %changelog
+* Mon Apr 04 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.4-1
+- SNOW.pm - fixed some date subroutines
+
+* Mon Mar 28 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.4-0
+- more speed improvements (dropping empty name lookups)
+- RITM searching improvements (e.g. they actually work, for now)
+
 * Mon Mar 28 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.3-0
-- added PRJTASK support (read-only)
+- added PRJTASK support (read-only, only in lists)
 
 * Mon Mar 28 2016   Tim Skirvin <tskirvin@fnal.gov>   1.0.2-0
 - name caching works (should speed things up dramatically)

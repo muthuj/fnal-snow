@@ -898,6 +898,7 @@ hashref.
 sub user_by_name {
     my ($self, $name) = @_;
     print "user_by_name: $name\n" if $self->debug;
+    return undef unless $name;
     if (defined $NAMECACHE{$name}) { return $NAMECACHE{$name} }
     my @users = $self->query ('sys_user', { 'name' => $name });
     return undef unless (scalar @users == 1);
@@ -916,6 +917,7 @@ hashref.
 sub user_by_username {
     my ($self, $username) = @_;
     print "user_by_username: $username\n" if $self->debug;
+    return undef unless $username;
     if (defined $USERCACHE{$username}) { return $USERCACHE{$username} }
     my @users = $self->query ('sys_user', { 'user_name' => $username });
     return undef unless (scalar @users == 1);
@@ -986,14 +988,15 @@ sub set_ticket { set_config ('ticket', @_ ) }
 ### _format_date (SELF, TIME)
 # Generate a datetime from TIME.  If TIME is an INT, assume that it's
 # seconds-since-epoch; if it's a string, parse it with UnixDate to get
-# seconds-since-epoch; if we can
+# seconds-since-epoch.
 
 sub _format_date {
     my ($self, $time, $zone) = @_;
     if ($time =~ /^\d+$/) { }   # all is well
-    elsif ($time) { $time = UnixDate ($time || time, '%s'); }
-    return $time ? strftime ("%Y-%m-%d %H:%M:%S %Z", localtime($time))
-                 : sprintf ("%-20s", "(unknown)");
+    elsif ($time) { $time = UnixDate ("$time GMT", '%s'); }
+    my $return = $time ? strftime ("%Y-%m-%d %H:%M:%S %Z", localtime($time))
+                       : sprintf ("%-20s", "(unknown)");
+    return $return;
 }
 
 ### _format_text (SELF, ARGHASH, TEXT)
@@ -1137,17 +1140,22 @@ sub _tkt_filter {
     my @extra;
     if      (lc $subtype eq 'open') {
         $text  = "Open ${type}s";
-        push @extra, "incident_state<4";
+        if    (lc $t eq 'sc_req_item') { push @extra, "state>3" }
+        else { push @extra, "incident_state<4"; }
         push @extra, "stage!=complete";
+        push @extra, "stage!=Completed";
         push @extra, "stage!=Request Cancelled";
     } elsif (lc $subtype eq 'closed') {
         $text = "Closed ${type}s";
-        push @extra, 'incident_state>=4';
-        push @extra, "stage=Request Cancelled";
+        if (lc $t eq 'sc_req_item') { push @extra, "state<=3" }
+        else                        { push @extra, 'incident_state>=4' }
+        # push @extra, "state!=Cancelled";
     } elsif (lc $subtype eq 'unresolved') {
         $text = "Unresolved ${type}s";
-        push @extra, 'incident_state<6';
+        if (lc $t eq 'sc_req_item') { push @extra, "state>=3" }
+        else                        { push @extra, 'incident_state<6' }
         push @extra, "stage!=complete";
+        push @extra, "stage!=Completed";
     } elsif (defined ($subtype)) {
         $text = "All ${type}s"
     }
