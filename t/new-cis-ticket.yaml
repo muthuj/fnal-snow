@@ -1,8 +1,8 @@
 ## This ticket is a good start for creating tickets for the CIS team.
 
 ticket:
-    assignment_group:       'ECF-CIS'
-    group:                  'ECF-CIS'
+    assignment_group:       'SSI Internal'
+    group:                  'SSI Internal'
     impact:                 '4'
     short_description:      '(no subject)'
     u_categorization:       'Hardware -- Server -- Linux'
