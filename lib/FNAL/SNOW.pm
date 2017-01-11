@@ -1108,7 +1108,7 @@ sub _tkt_resolved_code   { $_[1]{'close_code'}           || '(none)'    }
 sub _tkt_resolved_text   { $_[1]{'close_notes'}          || '(none)'    }
 sub _tkt_stage           { $_[1]{'stage'}                || ''          }
 sub _tkt_state           { $_[1]{'incident_state'}       || 0           }
-sub _tkt_status          { $_[1]{'dv_incident_state'}    || '' }
+sub _tkt_status          { $_[1]{'dv_incident_state'} || $_[1]{'u_itil_state'} || '' }
 sub _tkt_summary         { $_[1]{'dv_short_description'} || '(none)'    }
 sub _tkt_svctype         { $_[1]{'u_service_type'}       || '(unknown)' }
 sub _tkt_urgency         { $_[1]{'dv_urgency'}           || '(unknown)' }
